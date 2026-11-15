@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<!-- Background of the Swapdeck install window (660×450 pt). Rendered to PNG by dmg.command.
+     Finder places the two icons at (180,150) and (480,150); everything else here is drawn. -->
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:660px;height:450px;overflow:hidden}
+body{font-family:-apple-system,"SF Pro Text","PingFang SC",sans-serif;background:#ececee;color:#16181d;-webkit-font-smoothing:antialiased;position:relative}
+.title{position:absolute;top:30px;left:0;right:0;text-align:center;font-size:15px;font-weight:600;letter-spacing:.01em}
+.title span{color:#6b6e75;font-weight:400}
+.arrow{position:absolute;top:140px;left:258px;width:144px;height:24px}
+.panel{position:absolute;left:24px;right:24px;bottom:50px;height:150px;background:#0e0f12;color:#f3f4f6;border-radius:18px;padding:18px 20px;display:flex;gap:20px}
+.steps{flex:1}
+.steps h3{font-size:13px;font-weight:600}
+.steps p{font-size:11.5px;color:#9ba0aa;line-height:1.65;margin-top:6px}
+.steps b{color:#f3f4f6;font-weight:500}
+.mock{width:268px;background:#f5f5f7;border-radius:12px;padding:12px 14px;color:#16181d;align-self:center}
+.mock .head{font-size:10.5px;color:#6b6e75;margin-bottom:8px}
+.mock .row{display:flex;align-items:center;justify-content:space-between;background:#fff;border-radius:9px;padding:9px 10px;font-size:11px}
+.mock .btn{font-size:11px;padding:4px 10px;border-radius:7px;background:#e4e4e7;box-shadow:0 0 0 2px #2f6bff;font-weight:500}
+.mock .sub{font-size:9.5px;color:#8a8d94;margin-top:6px;line-height:1.4}
+</style></head><body>
+<div class="title">把切号拖进「应用程序」<span>　即可完成安装</span></div>
+<svg class="arrow" viewBox="0 0 144 24"><path d="M2 12H134" stroke="#16181d" stroke-width="2.5" stroke-linecap="round"/><path d="M124 3L136 12L124 21" fill="none" stroke="#16181d" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+<div class="panel">
+  <div class="steps">
+    <h3>第一次打开提示「无法验证」？</h3>
+    <p>这是因为应用没有经过 Apple 公证，属于正常情况。打开<b>系统设置 → 隐私与安全性</b>，向下滑到「安全性」，点<b>仍要打开</b>，再确认一次即可。之后打开和自动更新都不会再提示。</p>
+  </div>
+  <div class="mock">
+    <div class="head">系统设置 › 隐私与安全性 › 安全性</div>
+    <div class="row"><span>已阻止“切号”以保护 Mac。</span><span class="btn">仍要打开</span></div>
+    <div class="sub">Apple 无法验证“切号”是否包含可能危害 Mac 安全的恶意软件。</div>
+  </div>
+</div>
+</body></html>

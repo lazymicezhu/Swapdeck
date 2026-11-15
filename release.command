@@ -3,7 +3,7 @@
 #
 #   ./release.command 1.1.1 "这次改了什么"
 #
-# Steps: bump the version, build, sign the zip with the Sparkle key, commit the version, create the GitHub
+# Steps: bump the version, build (zip for Sparkle, dmg for people), sign the zip with the Sparkle key, commit the version, create the GitHub
 # release with the zip, then publish the new appcast entry (last, so the feed never points at a missing file).
 set -e
 setopt null_glob
@@ -27,7 +27,9 @@ BUILD=$(( $(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" $PLIST) + 1 ))
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" -c "Set :CFBundleVersion $BUILD" $PLIST
 
 zsh build.command
+zsh dmg.command   # install window for people downloading by hand
 ZIP="Swapdeck-$VERSION.zip"
+DMG="Swapdeck-$VERSION.dmg"
 SIG=$(Vendor/bin/sign_update --ed-key-file "$KEY" "$ZIP")   # sparkle:edSignature="…" length="…"
 
 git add $PLIST
@@ -42,6 +44,7 @@ BODY=$(python3 -c 'import json,sys; print(json.dumps({"tag_name":"v"+sys.argv[1]
 UPLOAD=$(curl -sf -K "$AUTH" -H "Accept: application/vnd.github+json" -d "$BODY" "https://api.github.com/repos/$REPO/releases" \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["upload_url"].split("{")[0])')
 curl -sf -K "$AUTH" -H "Content-Type: application/zip" --data-binary @"$ZIP" "$UPLOAD?name=$ZIP" >/dev/null
+curl -sf -K "$AUTH" -H "Content-Type: application/x-apple-diskimage" --data-binary @"$DMG" "$UPLOAD?name=$DMG" >/dev/null
 URL="https://github.com/$REPO/releases/download/v$VERSION/$ZIP"
 
 # Newest entry first; older ones stay so anyone can still read the history.
