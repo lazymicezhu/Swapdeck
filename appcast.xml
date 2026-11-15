@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Swapdeck</title>
+    <item>
+      <title>1.1.0</title>
+      <pubDate>Sun, 15 Nov 2026 20:11:45 +0800</pubDate>
+      <sparkle:version>3</sparkle:version>
+      <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<p>首个支持自动更新的版本：<br>- 卡匣式界面，切换 Claude / Codex 桌面端的账号和中转<br>- 显示 ChatGPT 5 小时 / 7 天额度和恢复时间<br>- 内置自动更新</p>]]></description>
+      <enclosure url="https://github.com/lazymicezhu/Swapdeck/releases/download/v1.1.0/Swapdeck-1.1.0.zip" type="application/octet-stream" sparkle:edSignature="QwV4MuWhoK3h10rs9IStslRWvji2NZFeDvlvz0zgDgVVfZunROh5jJqwAlM3IhFRiMl1pdhTbVS910KKFqKUDA==" length="2986901" />
+    </item>
+  </channel>
+</rss>
