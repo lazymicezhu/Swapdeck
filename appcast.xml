@@ -3,6 +3,15 @@
   <channel>
     <title>Swapdeck</title>
     <item>
+      <title>1.2.0</title>
+      <pubDate>Mon, 16 Nov 2026 22:50:13 +0800</pubDate>
+      <sparkle:version>4</sparkle:version>
+      <sparkle:shortVersionString>1.2.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<p>新增近 30 天用量：正在用的卡片底部显示每天的消耗，鼠标移到柱子上能看当天的数字。<br>中转显示人民币花费；new-api 中转可以在编辑里填访问令牌，读取网站自己的每日统计。<br>ChatGPT 账号读本机 Codex 的会话记录，按 OpenAI API 价格折算成美元，只是估算。</p>]]></description>
+      <enclosure url="https://github.com/lazymicezhu/Swapdeck/releases/download/v1.2.0/Swapdeck-1.2.0.zip" type="application/octet-stream" sparkle:edSignature="3CTL90C58dQFYXbeErapCGqD1kpd+lp+gWoEf+LohbuzaySryjlqR8v0vwAln8i4YxZpS1778RLPdLfHJ1lLBA==" length="3141146" />
+    </item>
+    <item>
       <title>1.1.0</title>
       <pubDate>Sun, 15 Nov 2026 20:11:45 +0800</pubDate>
       <sparkle:version>3</sparkle:version>
