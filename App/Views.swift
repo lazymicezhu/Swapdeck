@@ -9,7 +9,9 @@ enum SwitcherTab: String, CaseIterable, Identifiable {
 /// The card case: every account or relay is a card. The one in use sits in front, fully open;
 /// the rest are stacked under it showing one edge. 切换 brings a card to the front.
 struct SwitcherView: View {
-    @AppStorage("switcher.tab") private var tab = SwitcherTab.claude.rawValue
+    // Read once, then kept in view state: a launch argument (-switcher.tab, used for screenshots) outranks saved
+    // defaults, so reading it on every redraw would pin the tab and make the switch unclickable.
+    @State private var tab = UserDefaults.standard.string(forKey: "switcher.tab") ?? SwitcherTab.claude.rawValue
     @State private var showSettings = false
     private var claude = ClaudeStore.shared
     private var codex = CodexStore.shared
@@ -31,6 +33,7 @@ struct SwitcherView: View {
         .background(Palette.window)
         .ignoresSafeArea(.container, edges: .top)
         .sheet(isPresented: $showSettings) { SettingsSheet() }
+        .onChange(of: tab) { _, value in UserDefaults.standard.set(value, forKey: "switcher.tab") }
     }
 
     /// Sits in the transparent title bar, clear of the window buttons; the switch stays centred.
@@ -125,6 +128,8 @@ private struct CardModel: Identifiable {
     let title: String
     let body: Body
     let note: String?         // error or "读取中"
+    /// Last 30 days: yuan for a relay, tokens for a ChatGPT account. Shown on the front card only.
+    var usage: UsageSeries? = nil
 }
 
 /// The front card: fully open, ink coloured.
@@ -139,7 +144,7 @@ private struct FrontCard: View {
                     Text(card.title).font(.system(size: 16, weight: .semibold)).lineLimit(1).truncationMode(.middle)
                 }
                 Spacer(minLength: 8)
-                if case .quota(let plan, let five, let week, _) = card.body {
+                if case .quota(let plan, let five, let week, let credits) = card.body {
                     // A used-up window takes the plan's place with the time it comes back.
                     if let back = [five, week].compactMap({ $0 }).filter(\.exhausted).map(\.resetAt).min() {
                         Text("\(ResetText.moment(back)) 恢复").font(.system(size: 11)).monospacedDigit()
@@ -151,6 +156,7 @@ private struct FrontCard: View {
                         Text(plan).font(.system(size: 11))
                             .padding(.horizontal, 9).padding(.vertical, 2)
                             .overlay(Capsule().strokeBorder(Palette.inkText.opacity(0.28)))
+                            .help(credits.map { "Credits：\($0)" } ?? "")
                     }
                 }
             }
@@ -158,7 +164,7 @@ private struct FrontCard: View {
             case .quota(_, let five, let week, let credits):
                 Meter(label: "5 小时", window: five).padding(.top, 20)
                 Meter(label: "7 天", window: week).padding(.top, 14)
-                if let credits {
+                if card.usage == nil, let credits {
                     HStack {
                         Text("Credits").foregroundStyle(Palette.inkMuted)
                         Spacer()
@@ -176,6 +182,9 @@ private struct FrontCard: View {
                 }
                 .padding(.top, 26)
             }
+            if let usage = card.usage {
+                UsageBars(series: usage).padding(.top, 18)
+            }
             if let note = card.note {
                 Text(note).font(.system(size: 11)).foregroundStyle(Palette.warn).padding(.top, 10)
             }
@@ -192,11 +201,11 @@ private struct FrontCard: View {
 enum ResetText {
     /// 20:10 today, 11月20日 otherwise.
     static func moment(_ date: Date) -> String {
-        Calendar.current.isDateInToday(date) ? date.formatted(.dateTime.hour().minute()) : date.formatted(.dateTime.month().day())
+        date.timeIntervalSinceNow < 86400 ? date.formatted(.dateTime.hour().minute()) : date.formatted(.dateTime.month().day())
     }
     /// 21:35 today, 11/18 otherwise: for the narrow stacked cards.
     static func short(_ date: Date) -> String {
-        Calendar.current.isDateInToday(date) ? date.formatted(.dateTime.hour().minute()) : date.formatted(.dateTime.month(.defaultDigits).day()).replacingOccurrences(of: "月", with: "/").replacingOccurrences(of: "日", with: "")
+        date.timeIntervalSinceNow < 86400 ? date.formatted(.dateTime.hour().minute()) : date.formatted(.dateTime.month(.defaultDigits).day()).replacingOccurrences(of: "月", with: "/").replacingOccurrences(of: "日", with: "")
     }
     static func countdown(to date: Date, now: Date = Date()) -> String {
         let seconds = max(0, Int(date.timeIntervalSince(now)))
@@ -262,6 +271,79 @@ private struct Meter: View {
         return remaining < 10 ? Palette.alarm : remaining < 30 ? Palette.warn : nil
     }
 
+}
+
+/// The last 30 days as thin bars: today brightest, the six days before it a step dimmer, the rest dim. Moving the
+/// pointer over the bars picks out one day and the line underneath shows that day's amount; leaving restores the totals.
+private struct UsageBars: View {
+    let series: UsageSeries
+    @State private var hovered: Int?
+
+    var body: some View {
+        let peak = max(series.days.max() ?? 0, 0.000001)
+        VStack(spacing: 8) {
+            GeometryReader { geo in
+                HStack(alignment: .bottom, spacing: 2) {
+                    ForEach(Array(series.days.enumerated()), id: \.offset) { index, value in
+                        RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                            .fill(Palette.inkText.opacity(opacity(index)))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: max(2, 38 * value / peak))
+                    }
+                }
+                .frame(width: geo.size.width, height: 38, alignment: .bottom)
+                .contentShape(Rectangle())
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active(let point):
+                        hovered = min(29, max(0, Int(point.x / max(geo.size.width, 1) * 30)))
+                    case .ended:
+                        hovered = nil
+                    }
+                }
+            }
+            .frame(height: 38)
+            Group {
+                if let hovered {
+                    HStack(spacing: 8) {
+                        Text(label(hovered)).foregroundStyle(Palette.inkMuted)
+                        Text(series.text(series.days[hovered])).fontWeight(.semibold).monospacedDigit()
+                        Spacer(minLength: 0)
+                    }
+                } else {
+                    HStack {
+                        total("今日", series.today)
+                        Spacer()
+                        total("7 天", series.week)
+                        Spacer()
+                        total("30 天", series.month)
+                    }
+                }
+            }
+            .font(.system(size: 11))
+            .frame(height: 14)
+        }
+        .animation(.easeOut(duration: 0.12), value: hovered)
+    }
+
+    private func opacity(_ index: Int) -> Double {
+        if let hovered { return index == hovered ? 1 : 0.16 }
+        return index == 29 ? 1 : index >= 23 ? 0.55 : 0.22
+    }
+
+    private func total(_ label: String, _ value: Double) -> some View {
+        HStack(spacing: 4) {
+            Text(label).foregroundStyle(Palette.inkMuted)
+            Text(series.text(value)).fontWeight(.semibold).monospacedDigit()
+        }
+    }
+
+    private func label(_ index: Int) -> String {
+        if index == 29 { return "今天" }
+        if index == 28 { return "昨天" }
+        let day = Calendar.current.date(byAdding: .day, value: index - 29, to: Date())!
+        return day.formatted(.dateTime.month().day().weekday(.abbreviated))
+    }
 }
 
 /// One window on a stacked card, as wide as the card: 20 cells, neutral until it runs low. Used up, the row becomes a
@@ -466,7 +548,8 @@ private struct ClaudeCase: View {
             let amount = store.balances[provider.id].map { Fmt.yuanDown($0.credit * provider.cnyPerUnit, 2) }
             return CardModel(id: provider.id, kind: "中转", title: provider.displayName,
                              body: .balance(host: provider.root?.host ?? "地址无效", amount: amount),
-                             note: amount == nil ? store.errors[provider.id] : nil)
+                             note: amount == nil ? store.errors[provider.id] : nil,
+                             usage: UsageStore.shared.series(relay: provider.id, ratio: provider.cnyPerUnit))
         }
     }
 
@@ -523,12 +606,14 @@ private struct CodexCase: View {
                 }
                 return CardModel(id: profile.id, kind: "ChatGPT", title: profile.displayName,
                                  body: .quota(plan: (quota?.plan ?? profile.plan)?.capitalized, five: quota?.fiveHour, week: quota?.week, credits: credits),
-                                 note: store.errors[profile.id] ?? (quota == nil ? "读取中" : nil))
+                                 note: store.errors[profile.id] ?? (quota == nil ? "读取中" : nil),
+                                 usage: UsageStore.shared.series(account: profile.accountID))
             case .relay:
                 let amount = store.balances[profile.id].map { Fmt.yuanDown($0.credit * profile.cnyPerUnit, 2) }
                 return CardModel(id: profile.id, kind: "中转", title: profile.displayName,
                                  body: .balance(host: profile.root?.host ?? "地址无效", amount: amount),
-                                 note: amount == nil ? store.errors[profile.id] : nil)
+                                 note: amount == nil ? store.errors[profile.id] : nil,
+                                 usage: UsageStore.shared.series(relay: profile.id, ratio: profile.cnyPerUnit))
             }
         }
     }
@@ -648,8 +733,10 @@ private struct RelayForm: View {
     @Binding var name: String
     @Binding var baseURL: String
     @Binding var key: String
+    @Binding var accessToken: String
     @Binding var ratio: Double
     let keySaved: Bool
+    let accessSaved: Bool
     let valid: Bool
     let canSave: Bool
     let failed: Bool
@@ -663,6 +750,8 @@ private struct RelayForm: View {
                     TextField("名称", text: $name, prompt: Text("可选"))
                     TextField("地址", text: $baseURL, prompt: Text("https://example.com"))
                     SecureField("Key", text: $key, prompt: Text(keySaved ? "已保存，输入新的以替换" : "粘贴 API Key"))
+                    SecureField("访问令牌", text: $accessToken, prompt: Text(accessSaved ? "已保存，输入新的以替换" : "可选"))
+                        .help("new-api 中转（如 corecode）的系统访问令牌，在网站「个人设置 → 安全设置」生成。填了能显示近 30 天每天的花费；不填就从切号开始记录的那天起，按余额变化估算。")
                     LabeledContent("充值比例") {
                         HStack(spacing: 4) {
                             Text("¥").foregroundStyle(.secondary)
@@ -688,13 +777,14 @@ private struct RelayForm: View {
             }
             .padding(.horizontal, 20).padding(.bottom, 16)
         }
-        .frame(width: 400, height: 320)
+        .frame(width: 400, height: 350)
     }
 }
 
 struct ClaudeProviderEditor: View {
     @State var provider: ClaudeProvider
     @State private var key = ""
+    @State private var accessToken = ""
     @State private var failed = false
     @Environment(\.dismiss) private var dismiss
     private let store = ClaudeStore.shared
@@ -704,11 +794,11 @@ struct ClaudeProviderEditor: View {
 
     var body: some View {
         RelayForm(title: isNew ? "添加 Claude 中转" : "编辑 Claude 中转",
-                  name: $provider.name, baseURL: $provider.baseURL, key: $key, ratio: $provider.cnyPerUnit,
-                  keySaved: keySaved, valid: provider.root != nil,
+                  name: $provider.name, baseURL: $provider.baseURL, key: $key, accessToken: $accessToken, ratio: $provider.cnyPerUnit,
+                  keySaved: keySaved, accessSaved: !isNew && Secrets.get(provider.accessAccount) != nil, valid: provider.root != nil,
                   canSave: provider.root != nil && provider.cnyPerUnit > 0 && (keySaved || !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
                   failed: failed) {
-            if store.save(provider, key: key) { dismiss() } else { failed = true }
+            if store.save(provider, key: key, accessToken: accessToken) { dismiss() } else { failed = true }
         }
     }
 }
@@ -716,6 +806,7 @@ struct ClaudeProviderEditor: View {
 struct CodexRelayEditor: View {
     @State var profile: CodexProfile
     @State private var key = ""
+    @State private var accessToken = ""
     @State private var failed = false
     @Environment(\.dismiss) private var dismiss
     private let store = CodexStore.shared
@@ -725,11 +816,11 @@ struct CodexRelayEditor: View {
 
     var body: some View {
         RelayForm(title: isNew ? "添加 Codex 中转" : "编辑 Codex 中转",
-                  name: $profile.name, baseURL: $profile.baseURL, key: $key, ratio: $profile.cnyPerUnit,
-                  keySaved: keySaved, valid: profile.root != nil,
+                  name: $profile.name, baseURL: $profile.baseURL, key: $key, accessToken: $accessToken, ratio: $profile.cnyPerUnit,
+                  keySaved: keySaved, accessSaved: !isNew && Secrets.get(profile.accessAccount) != nil, valid: profile.root != nil,
                   canSave: profile.root != nil && profile.cnyPerUnit > 0 && (keySaved || !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
                   failed: failed) {
-            if store.saveRelay(profile, key: key) { dismiss() } else { failed = true }
+            if store.saveRelay(profile, key: key, accessToken: accessToken) { dismiss() } else { failed = true }
         }
     }
 }

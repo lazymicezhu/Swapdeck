@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             LegacyPrefs.migrateOnce()
             YuliangImport.runOnce()
+            YuliangImport.accessTokensOnce()
             NSApp.mainMenu = MainMenu.build()
             // `--dark` / `--light` force an appearance, for checking the design.
             if CommandLine.arguments.contains("--dark") { NSApp.appearance = NSAppearance(named: .darkAqua) }
@@ -213,6 +214,21 @@ enum YuliangImport {
             if let relay = UserDefaults(suiteName: "com.lazymice.yuliang.mac")?.string(forKey: "codex.proxyRelay") {
                 defaults.set(relay, forKey: "codex.proxyRelay")
             }
+        }
+        if !values.isEmpty { try? Secrets.set(values) }
+    }
+
+    /// 1.2: new-api system access tokens saved in 余量 for the same Claude relays, for spend per day.
+    static func accessTokensOnce() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: "import.yuliang.access") else { return }
+        defaults.set(true, forKey: "import.yuliang.access")
+        let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Yuliang/Secrets/credentials.json")
+        let secrets = (readJSON(url)?["values"] as? [String: String]) ?? [:]
+        var values: [String: String?] = [:]
+        for provider in ClaudeStore.shared.providers where Secrets.get(provider.accessAccount) == nil {
+            if let token = secrets["relay.access.\(provider.id.uuidString)"] { values[provider.accessAccount] = token }
         }
         if !values.isEmpty { try? Secrets.set(values) }
     }

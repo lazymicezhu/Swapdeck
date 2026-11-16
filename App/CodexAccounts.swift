@@ -20,6 +20,8 @@ struct CodexProfile: Codable, Hashable, Identifiable {
 
     /// Official: the whole auth.json; relay: the API key. Kept in 切号's private credential file.
     var secretAccount: String { "codex.\(kind.rawValue).\(id.uuidString)" }
+    /// Relay: optional new-api system access token, for spend per day.
+    var accessAccount: String { "codex.access.\(id.uuidString)" }
 
     var displayName: String {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
@@ -496,10 +498,14 @@ final class CodexStore {
     // MARK: Editing
 
     @discardableResult
-    func saveRelay(_ profile: CodexProfile, key: String) -> Bool {
+    func saveRelay(_ profile: CodexProfile, key: String, accessToken: String = "") -> Bool {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
             do { try Secrets.set(trimmed, for: profile.secretAccount) } catch { return false }
+        }
+        let access = accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !access.isEmpty {
+            do { try Secrets.set(access, for: profile.accessAccount) } catch { return false }
         }
         if let index = profiles.firstIndex(where: { $0.id == profile.id }) { profiles[index] = profile } else { profiles.append(profile) }
         save()
@@ -522,7 +528,7 @@ final class CodexStore {
 
     func delete(_ id: UUID) {
         guard let profile = profiles.first(where: { $0.id == id }), id != activeID else { return }
-        try? Secrets.set(nil, for: profile.secretAccount)
+        try? Secrets.set([profile.secretAccount: nil, profile.accessAccount: nil])
         profiles.removeAll { $0.id == id }
         quotas[id] = nil; balances[id] = nil; errors[id] = nil
         save()
@@ -538,6 +544,7 @@ final class CodexStore {
         refreshing = true
         nextRefresh = Date().addingTimeInterval(Self.refreshEvery)
         for profile in profiles { await refresh(profile) }
+        await UsageStore.shared.refreshAccounts()
         refreshing = false
         refreshedAt = Date()
     }
@@ -597,7 +604,10 @@ final class CodexStore {
         }
         switch await RelayBalance.fetch(root: root, key: key) {
         case .success(let credit):
-            balances[profile.id] = (credit, Date()); errors[profile.id] = nil; return
+            balances[profile.id] = (credit, Date()); errors[profile.id] = nil
+            UsageStore.shared.recordBalance(profile.id, credit: credit)
+            await UsageStore.shared.refreshRelay(profile.id, root: root, key: key, accessToken: Secrets.get(profile.accessAccount))
+            return
         case .failure(let failure) where failure.status != nil && failure.status != 404:
             balances[profile.id] = nil; errors[profile.id] = failure.message; return
         case .failure:

@@ -11,6 +11,8 @@ struct ClaudeProvider: Codable, Hashable, Identifiable {
     var cnyPerUnit = 1.0
 
     var keyAccount: String { "claude.key.\(id.uuidString)" }
+    /// Optional new-api system access token, for spend per day.
+    var accessAccount: String { "claude.access.\(id.uuidString)" }
     var root: URL? { Endpoint.root(from: baseURL) }
     var displayName: String {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
@@ -199,10 +201,14 @@ final class ClaudeStore {
     // MARK: Editing
 
     @discardableResult
-    func save(_ provider: ClaudeProvider, key: String) -> Bool {
+    func save(_ provider: ClaudeProvider, key: String, accessToken: String = "") -> Bool {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
             do { try Secrets.set(trimmed, for: provider.keyAccount) } catch { return false }
+        }
+        let access = accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !access.isEmpty {
+            do { try Secrets.set(access, for: provider.accessAccount) } catch { return false }
         }
         let wasActive = provider.id == activeID
         if let index = providers.firstIndex(where: { $0.id == provider.id }) { providers[index] = provider } else { providers.append(provider) }
@@ -220,7 +226,7 @@ final class ClaudeStore {
 
     func delete(_ id: UUID) {
         guard let provider = providers.first(where: { $0.id == id }), id != activeID else { return }
-        try? Secrets.set(nil, for: provider.keyAccount)
+        try? Secrets.set([provider.keyAccount: nil, provider.accessAccount: nil])
         providers.removeAll { $0.id == id }
         balances[id] = nil; errors[id] = nil
         save()
@@ -250,9 +256,12 @@ final class ClaudeStore {
     func refresh(_ provider: ClaudeProvider) async {
         guard let key = Secrets.get(provider.keyAccount), let root = provider.root else { errors[provider.id] = "没有 API Key"; return }
         switch await RelayBalance.fetch(root: root, key: key) {
-        case .success(let credit): balances[provider.id] = (credit, Date()); errors[provider.id] = nil
+        case .success(let credit):
+            balances[provider.id] = (credit, Date()); errors[provider.id] = nil
+            UsageStore.shared.recordBalance(provider.id, credit: credit)
         case .failure(let failure): balances[provider.id] = nil; errors[provider.id] = failure.message
         }
+        await UsageStore.shared.refreshRelay(provider.id, root: root, key: key, accessToken: Secrets.get(provider.accessAccount))
     }
 
     // MARK: Import
