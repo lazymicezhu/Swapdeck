@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import Darwin
@@ -52,7 +53,7 @@ struct CodexQuota: Codable, Hashable {
     var at: Date
 }
 
-/// ~/.codex (or $CODEX_HOME): auth.json and the one config line 切号 owns, `openai_base_url`.
+/// ~/.codex (or $CODEX_HOME): auth.json and the config lines 切号 owns, `openai_base_url` and (for relays) `model_catalog_json`.
 enum CodexFiles {
     enum Failure: Error { case writeFailed }
 
@@ -62,6 +63,9 @@ enum CodexFiles {
     }
     static var auth: URL { home.appendingPathComponent("auth.json") }
     static var config: URL { home.appendingPathComponent("config.toml") }
+    /// 切号's copy of the relay's Codex model list. With an API key Codex never asks the relay for its models and
+    /// falls back to the list built into the app, so 切号 fetches it and points `model_catalog_json` here.
+    static var relayCatalog: URL { home.appendingPathComponent("swapdeck-models.json") }
 
     static func authData() -> Data? { try? Data(contentsOf: auth) }
     static func authObject() -> [String: Any]? {
@@ -115,17 +119,35 @@ enum CodexFiles {
     static func modelProvider() -> String? { topLevelValue("model_provider") }
 
     /// Sets or removes the top-level `openai_base_url`, leaving every other line as it was.
-    static func setBaseURL(_ url: String?) throws {
+    static func setBaseURL(_ url: String?) throws { try setTopLevel("openai_base_url", url) }
+
+    /// Points Codex at 切号's copy of the relay's model list, or removes that pointer.
+    /// A `model_catalog_json` the user set to some other file is left alone.
+    static func setRelayCatalog(_ on: Bool) throws {
+        if let current = topLevelValue("model_catalog_json"), current != relayCatalog.path { return }
+        try setTopLevel("model_catalog_json", on ? relayCatalog.path : nil)
+    }
+
+    static func writeRelayCatalog(_ data: Data) throws {
+        try? FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try atomicWrite(data, to: relayCatalog, mode: 0o644)
+    }
+
+    private static func setTopLevel(_ key: String, _ value: String?) throws {
         let fm = FileManager.default
         let text = (try? String(contentsOf: config, encoding: .utf8)) ?? ""
         var lines = text.isEmpty ? [] : text.components(separatedBy: "\n")
         let top = topLevelRange(lines)
         let existing = lines[top].indices.filter {
-            lines[$0].split(separator: "=", maxSplits: 1).first?.trimmingCharacters(in: .whitespaces) == "openai_base_url"
+            lines[$0].split(separator: "=", maxSplits: 1).first?.trimmingCharacters(in: .whitespaces) == key
         }
+        if value == nil && existing.isEmpty { return }
         for index in existing.reversed() { lines.remove(at: index) }
-        if let url { lines.insert("openai_base_url = \"\(url)\"", at: 0) }
-        if lines.isEmpty && url == nil && !fm.fileExists(atPath: config.path) { return }
+        if let value {
+            let escaped = value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+            lines.insert("\(key) = \"\(escaped)\"", at: 0)
+        }
+        if lines.isEmpty && value == nil && !fm.fileExists(atPath: config.path) { return }
         let mode = ((try? fm.attributesOfItem(atPath: config.path))?[.posixPermissions] as? Int) ?? 0o644
         try? fm.createDirectory(at: home, withIntermediateDirectories: true)
         try atomicWrite(Data(lines.joined(separator: "\n").utf8), to: config, mode: mode & 0o777)
@@ -140,6 +162,61 @@ enum CodexFiles {
             try? FileManager.default.removeItem(at: temporary)
             throw Failure.writeFailed
         }
+    }
+}
+
+/// The model list a relay serves to Codex: `GET /v1/models?client_version=…` in Codex's manifest format
+/// (sub2api answers this shape whenever `client_version` is present).
+enum RelayCatalog {
+    /// The version Codex reports when it fetches models itself, so the relay tailors the list the same way.
+    static func clientVersion() -> String {
+        if let data = try? Data(contentsOf: CodexFiles.home.appendingPathComponent("models_cache.json")),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let version = object["client_version"] as? String, !version.isEmpty {
+            return version
+        }
+        if let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: AppActivity.codexBundle) {
+            for path in ["Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex", "Contents/Resources/codex"] {
+                let binary = app.appendingPathComponent(path)
+                guard FileManager.default.isExecutableFile(atPath: binary.path) else { continue }
+                let process = Process(), pipe = Pipe()
+                process.executableURL = binary
+                process.arguments = ["--version"]
+                process.standardOutput = pipe
+                process.standardError = FileHandle.nullDevice
+                guard (try? process.run()) != nil else { continue }
+                process.waitUntilExit()
+                let text = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                if let r = text.range(of: #"\d+\.\d+\.\d+"#, options: .regularExpression) { return String(text[r]) }
+            }
+        }
+        return "0.169.0"
+    }
+
+    /// The relay's manifest, or nil when it doesn't serve one (then Codex keeps its built-in list).
+    static func fetch(root: URL, key: String) async -> Data? {
+        let version = await Task.detached { clientVersion() }.value
+        guard var components = URLComponents(url: root.appendingPathComponent("v1/models"), resolvingAgainstBaseURL: false) else { return nil }
+        components.queryItems = [URLQueryItem(name: "client_version", value: version)]
+        guard let url = components.url else { return nil }
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 8)
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let models = object["models"] as? [[String: Any]], !models.isEmpty,
+              models.allSatisfy({ $0["slug"] is String }) else { return nil }
+        return data
+    }
+
+    /// Refreshes 切号's copy and points Codex at it; without a manifest the pointer is removed.
+    @discardableResult
+    static func install(root: URL, key: String) async -> Bool {
+        guard let data = await fetch(root: root, key: key) else {
+            try? CodexFiles.setRelayCatalog(false)
+            return false
+        }
+        do { try CodexFiles.writeRelayCatalog(data); try CodexFiles.setRelayCatalog(true); return true } catch { return false }
     }
 }
 
@@ -290,6 +367,8 @@ final class CodexStore {
     private(set) var balances: [UUID: (credit: Double, at: Date)] = [:]
     private(set) var errors: [UUID: String] = [:]
     private(set) var refreshing = false
+    /// Fetching a relay's model list before switching to it.
+    private(set) var switching = false
     private(set) var refreshedAt: Date?
     private(set) var message: String?
     /// Waiting for the user to sign in to another account in Codex.
@@ -345,6 +424,10 @@ final class CodexStore {
         if proxyURL != base {
             try? CodexFiles.setBaseURL(proxyURL)
             message = "已改为经切号本机转发连接 \(relay.displayName)，重启 Codex 后提问不再反复重连。"
+        }
+        // Keep the relay's model list current for Codex's next start (also fixes relays switched to by older builds).
+        if let key = Secrets.get(relay.secretAccount) {
+            Task { await RelayCatalog.install(root: root, key: key) }
         }
     }
 
@@ -421,37 +504,62 @@ final class CodexStore {
     /// Points Codex at the profile and restarts the desktop app. Refuses while a turn is running.
     func switchTo(_ id: UUID) {
         guard let target = profiles.first(where: { $0.id == id }) else { return }
-        guard id != activeID else { return }
+        guard id != activeID, !switching else { return }
         let running = AppActivity.isRunning(AppActivity.codexBundle)
         if running && AppActivity.codexBusy() { BusyAlert.show("Codex"); return }
         if let provider = CodexFiles.modelProvider(), provider != "openai" {
             message = "config.toml 里设了 model_provider = \"\(provider)\"，切换不会生效，也会让会话列表按供应商分开。请删掉这一行后再切换。"
             return
         }
+        switch target.kind {
+        case .official:
+            guard let blob = Secrets.get(target.secretAccount) else {
+                message = "\(target.displayName) 的登录信息不在了，请重新登录这个账号。"; return
+            }
+            apply(target, running: running) {
+                try CodexFiles.writeAuth(Data(blob.utf8))
+                try CodexFiles.setBaseURL(nil)
+                try CodexFiles.setRelayCatalog(false)
+                CodexRelayProxy.shared.setUpstream(nil)
+            }
+        case .relay:
+            guard let key = Secrets.get(target.secretAccount), let root = target.root else {
+                message = "\(target.displayName) 还没有 API Key 或地址无效。"; return
+            }
+            // Codex never asks a relay for its models in API-key mode, so fetch them first (see RelayCatalog).
+            switching = true
+            message = "正在读取 \(target.displayName) 的模型列表…"
+            Task {
+                let catalog = await RelayCatalog.fetch(root: root, key: key)
+                switching = false
+                apply(target, running: running) {
+                    // Codex talks to the loopback forwarder, which turns away its WebSocket attempt (see CodexRelayProxy).
+                    guard CodexRelayProxy.shared.start(upstream: root) != nil, let base = CodexRelayProxy.shared.codexBaseURL else {
+                        throw SwitchFailure.message("本机转发没能启动（端口 47811–47830 都被占用），Codex 仍用原来的账号。")
+                    }
+                    proxyRelayID = target.id
+                    let auth: [String: Any] = ["auth_mode": "apikey", "OPENAI_API_KEY": key]
+                    try CodexFiles.writeAuth(try JSONSerialization.data(withJSONObject: auth, options: [.prettyPrinted]))
+                    try CodexFiles.setBaseURL(base)
+                    if let catalog { try CodexFiles.writeRelayCatalog(catalog) }
+                    try CodexFiles.setRelayCatalog(catalog != nil)
+                }
+            }
+        }
+    }
+
+    private enum SwitchFailure: Error { case message(String) }
+
+    /// Writes the target's files into ~/.codex, then restarts Codex when asked to.
+    private func apply(_ target: CodexProfile, running: Bool, write: () throws -> Void) {
+        let id = target.id
         detectActive()   // save the current login's latest tokens before leaving it
         CodexFiles.backupOnce()
         do {
-            switch target.kind {
-            case .official:
-                guard let blob = Secrets.get(target.secretAccount) else {
-                    message = "\(target.displayName) 的登录信息不在了，请重新登录这个账号。"; return
-                }
-                try CodexFiles.writeAuth(Data(blob.utf8))
-                try CodexFiles.setBaseURL(nil)
-                CodexRelayProxy.shared.setUpstream(nil)
-            case .relay:
-                guard let key = Secrets.get(target.secretAccount), let root = target.root else {
-                    message = "\(target.displayName) 还没有 API Key 或地址无效。"; return
-                }
-                // Codex talks to the loopback forwarder, which turns away its WebSocket attempt (see CodexRelayProxy).
-                guard CodexRelayProxy.shared.start(upstream: root) != nil, let base = CodexRelayProxy.shared.codexBaseURL else {
-                    message = "本机转发没能启动（端口 47811–47830 都被占用），Codex 仍用原来的账号。"; return
-                }
-                proxyRelayID = target.id
-                let auth: [String: Any] = ["auth_mode": "apikey", "OPENAI_API_KEY": key]
-                try CodexFiles.writeAuth(try JSONSerialization.data(withJSONObject: auth, options: [.prettyPrinted]))
-                try CodexFiles.setBaseURL(base)
-            }
+            try write()
+        } catch SwitchFailure.message(let text) {
+            message = text
+            return
         } catch {
             message = "写入 ~/.codex 失败，Codex 仍用原来的账号。"
             return
@@ -480,6 +588,7 @@ final class CodexStore {
         CodexFiles.backupOnce()
         CodexFiles.removeAuth()
         try? CodexFiles.setBaseURL(nil)
+        try? CodexFiles.setRelayCatalog(false)
         lastAuthDate = nil
         activeID = nil
         pendingLogin = true
