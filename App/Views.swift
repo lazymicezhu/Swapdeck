@@ -692,8 +692,8 @@ private struct CodexCase: View {
             Group {
                 if adding {
                     AddChoices(close: { adding = false }, choices: [
-                        ("Lazymice 账号", "登录或注册", true, { signingIn = Sub2APISignIn() }),
-                        ("ChatGPT 账号", "在 Codex 里登录", !store.pendingLogin, { store.beginLogin() }),
+                        ("Lazymice中转", "登录或注册", true, { signingIn = Sub2APISignIn() }),
+                        ("官方订阅", "在 Codex 里登录", !store.pendingLogin, { store.beginLogin() }),
                     ])
                     .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .bottom)))
                 } else {
