@@ -864,47 +864,86 @@ struct Sub2APILoginSheet: View {
         return !signUp || !invitation.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
+    /// Same look as the front card: an ink card, thin underlined fields, the main button in reverse.
     var body: some View {
-        VStack(spacing: 0) {
-            Form {
-                Section {
-                    Picker("", selection: $signUp) {
-                        Text("登录").tag(false)
-                        Text("注册").tag(true)
-                    }
-                    .pickerStyle(.segmented).labelsHidden()
-                    .disabled(tempToken != nil)
-                    TextField("邮箱", text: $email, prompt: Text("name@example.com")).disabled(tempToken != nil)
-                    SecureField("密码", text: $password, prompt: Text(signUp ? "至少 6 位" : "")).disabled(tempToken != nil)
-                    if signUp {
-                        TextField("邀请码", text: $invitation, prompt: Text("向站长要"))
-                    }
-                    if tempToken != nil {
-                        TextField("两步验证码", text: $code, prompt: Text("验证器里的 6 位数字"))
-                    }
-                } header: {
-                    Text("Lazymice 中转")
-                } footer: {
-                    if let error {
-                        Text(error).font(.caption).foregroundStyle(.red)
-                    } else {
-                        Text(tempToken != nil ? "这个账号开了两步验证。"
-                             : "登录后自动开好 Codex 用的 Key 并切换过去，不用打开网站。已有账号直接登录即可。")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Lazymice 中转").font(.system(size: 11)).foregroundStyle(Palette.inkMuted)
+            Text(tempToken != nil ? "两步验证" : signUp ? "注册" : "登录")
+                .font(.system(size: 16, weight: .semibold)).padding(.top, 3)
+            if tempToken == nil {
+                HStack(spacing: 2) {
+                    modeButton("登录", on: !signUp) { signUp = false }
+                    modeButton("注册", on: signUp) { signUp = true }
                 }
+                .padding(2)
+                .background(Capsule().fill(Palette.inkText.opacity(0.08)))
+                .padding(.top, 16)
+                field("邮箱") { TextField("", text: $email) }
+                field("密码") { SecureField("", text: $password) }
+                if signUp { field("邀请码") { TextField("", text: $invitation) } }
+            } else {
+                field("验证码") { TextField("", text: $code) }
             }
-            .formStyle(.grouped)
-            HStack {
-                if busy { ProgressView().controlSize(.small) }
+            if let error {
+                Text(error).font(.system(size: 11.5)).foregroundStyle(Palette.alarm).padding(.top, 12)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 14) {
+                if busy { ProgressView().controlSize(.small).tint(Palette.inkText) }
                 Spacer()
-                Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button(signUp && tempToken == nil ? "注册并登录" : "登录", action: submit)
-                    .keyboardShortcut(.defaultAction).disabled(!ready || busy)
+                Button("取消") { dismiss() }
+                    .buttonStyle(.plain).font(.system(size: 12.5)).foregroundStyle(Palette.inkMuted)
+                    .keyboardShortcut(.cancelAction)
+                Button(action: submit) {
+                    Text(signUp && tempToken == nil ? "注册并登录" : "登录")
+                        .font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Palette.ink)
+                        .padding(.horizontal, 18).padding(.vertical, 7)
+                        .background(Capsule().fill(Palette.inkText))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!ready || busy)
+                .opacity(!ready || busy ? 0.4 : 1)
             }
-            .padding(.horizontal, 20).padding(.bottom, 16)
+            .padding(.top, 22)
         }
-        .frame(width: 400, height: signUp || tempToken != nil ? 330 : 290)
+        .foregroundStyle(Palette.inkText)
+        .tint(Palette.inkText)
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Palette.ink))
+        .shadow(color: .black.opacity(0.22), radius: 15, y: 8)
+        .padding(20)
+        .frame(width: 360)
+        .background(Palette.window)
+        .animation(.snappy(duration: 0.22), value: signUp)
+        .animation(.snappy(duration: 0.22), value: tempToken)
+        .animation(.snappy(duration: 0.22), value: error)
+    }
+
+    private func modeButton(_ title: String, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12.5, weight: on ? .semibold : .regular))
+                .foregroundStyle(on ? Palette.ink : Palette.inkMuted)
+                .padding(.horizontal, 16).padding(.vertical, 5)
+                .background(Capsule().fill(on ? Palette.inkText : Color.clear))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func field<Input: View>(_ label: String, @ViewBuilder input: () -> Input) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(label).font(.system(size: 11)).foregroundStyle(Palette.inkMuted)
+            input()
+                .textFieldStyle(.plain).labelsHidden()
+                .font(.system(size: 13.5))
+                .frame(minHeight: 20)
+            Rectangle().fill(Palette.inkText.opacity(0.18)).frame(height: 1)
+        }
+        .padding(.top, 14)
     }
 
     private func submit() {
