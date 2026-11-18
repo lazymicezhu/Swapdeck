@@ -3,6 +3,15 @@
   <channel>
     <title>Swapdeck</title>
     <item>
+      <title>1.2.3</title>
+      <pubDate>Wed, 18 Nov 2026 16:34:04 +0800</pubDate>
+      <sparkle:version>7</sparkle:version>
+      <sparkle:shortVersionString>1.2.3</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<p>Lazymice 账号改为直连站点，不再经过本机转发：开了 Clash 等系统代理也不会再报 502，Codex 用 WebSocket 长连接，不再反复重连。</p>]]></description>
+      <enclosure url="https://github.com/lazymicezhu/Swapdeck/releases/download/v1.2.3/Swapdeck-1.2.3.zip" type="application/octet-stream" sparkle:edSignature="nYQ4EGs5YxTOSdXLYrqBoI1ksGgonoXFfoGRd1u09ymXYisy3G25OoZYXlwyYf8Z6J1P4bs5Y8hfC1g9ZVHICQ==" length="3372277" />
+    </item>
+    <item>
       <title>1.2.2</title>
       <pubDate>Wed, 18 Nov 2026 15:12:59 +0800</pubDate>
       <sparkle:version>6</sparkle:version>
