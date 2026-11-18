@@ -593,6 +593,8 @@ private struct CodexCase: View {
     @State private var renaming: CodexProfile?
     @State private var newName = ""
     @State private var deleting: CodexProfile?
+    @State private var signingIn: Sub2APISignIn?
+    @State private var records: CodexProfile?
 
     private var cards: [CardModel] {
         store.profiles.map { profile in
@@ -610,7 +612,7 @@ private struct CodexCase: View {
                                  usage: UsageStore.shared.series(account: profile.accountID))
             case .relay:
                 let amount = store.balances[profile.id].map { Fmt.yuanDown($0.credit * profile.cnyPerUnit, 2) }
-                return CardModel(id: profile.id, kind: "中转", title: profile.displayName,
+                return CardModel(id: profile.id, kind: profile.isSub2API ? "Lazymice" : "中转", title: profile.displayName,
                                  body: .balance(host: profile.root?.host ?? "地址无效", amount: amount),
                                  note: amount == nil ? store.errors[profile.id] : nil,
                                  usage: UsageStore.shared.series(relay: profile.id, ratio: profile.cnyPerUnit))
@@ -631,7 +633,8 @@ private struct CodexCase: View {
                     .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Palette.back))
                 }
                 if store.profiles.isEmpty && !store.pendingLogin {
-                    Text("在 Codex 里登录 ChatGPT 账号后，它会自动出现在这里。")
+                    Text("在 Codex 里登录 ChatGPT 账号后，它会自动出现在这里。\n也可以在下方用 Lazymice 账号登录。")
+                        .multilineTextAlignment(.center)
                         .font(.system(size: 12.5)).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity).padding(.top, 80)
                 } else {
@@ -642,6 +645,7 @@ private struct CodexCase: View {
             }
         } footer: {
             Menu {
+                Button("用 Lazymice 账号登录或注册…") { signingIn = Sub2APISignIn() }
                 Button("登录另一个 ChatGPT 账号") { store.beginLogin() }.disabled(store.pendingLogin)
                 Button("添加中转…") { editing = CodexProfile(kind: .relay) }
             } label: {
@@ -652,6 +656,10 @@ private struct CodexCase: View {
             .menuIndicator(.hidden)
         }
         .sheet(item: $editing) { CodexRelayEditor(profile: $0) }
+        .sheet(item: $signingIn) { Sub2APILoginSheet(email: $0.email) }
+        .sheet(item: $records) { profile in
+            Sub2APIRecordsSheet(profile: profile) { records = nil; signingIn = Sub2APISignIn(email: profile.sub2apiEmail ?? "") }
+        }
         .alert("重命名", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("名称", text: $newName)
             Button("保存") { if let renaming { store.rename(renaming.id, to: newName) } }
@@ -666,6 +674,10 @@ private struct CodexCase: View {
         if let profile = store.profiles.first(where: { $0.id == id }) {
             let inUse = id == store.activeID
             if !inUse { Button("切换") { store.switchTo(id) } }
+            if profile.isSub2API {
+                Button("使用记录…") { records = profile }
+                Button("重新登录…") { signingIn = Sub2APISignIn(email: profile.sub2apiEmail ?? "") }
+            }
             if profile.kind == .relay { Button("编辑…") { editing = profile } }
             Button("重命名…") { newName = profile.name; renaming = profile }
             Button(profile.kind == .relay ? "刷新余额" : "刷新额度") { Task { await store.refresh(profile) } }
@@ -821,6 +833,195 @@ struct CodexRelayEditor: View {
                   canSave: profile.root != nil && profile.cnyPerUnit > 0 && (keySaved || !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
                   failed: failed) {
             if store.saveRelay(profile, key: key, accessToken: accessToken) { dismiss() } else { failed = true }
+        }
+    }
+}
+
+// MARK: Lazymice relay
+
+struct Sub2APISignIn: Identifiable {
+    let id = UUID()
+    var email = ""
+}
+
+/// Sign in or sign up on the Lazymice relay; 切号 then opens a key and switches Codex to it.
+struct Sub2APILoginSheet: View {
+    @State var email: String
+    @State private var signUp = false
+    @State private var password = ""
+    @State private var invitation = ""
+    @State private var code = ""
+    @State private var tempToken: String?
+    @State private var busy = false
+    @State private var error: String?
+    @Environment(\.dismiss) private var dismiss
+    private let store = CodexStore.shared
+
+    private var ready: Bool {
+        let mail = email.trimmingCharacters(in: .whitespaces)
+        if tempToken != nil { return code.trimmingCharacters(in: .whitespaces).count == 6 }
+        guard mail.contains("@"), password.count >= (signUp ? 6 : 1) else { return false }
+        return !signUp || !invitation.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Form {
+                Section {
+                    Picker("", selection: $signUp) {
+                        Text("登录").tag(false)
+                        Text("注册").tag(true)
+                    }
+                    .pickerStyle(.segmented).labelsHidden()
+                    .disabled(tempToken != nil)
+                    TextField("邮箱", text: $email, prompt: Text("name@example.com")).disabled(tempToken != nil)
+                    SecureField("密码", text: $password, prompt: Text(signUp ? "至少 6 位" : "")).disabled(tempToken != nil)
+                    if signUp {
+                        TextField("邀请码", text: $invitation, prompt: Text("向站长要"))
+                    }
+                    if tempToken != nil {
+                        TextField("两步验证码", text: $code, prompt: Text("验证器里的 6 位数字"))
+                    }
+                } header: {
+                    Text("Lazymice 中转")
+                } footer: {
+                    if let error {
+                        Text(error).font(.caption).foregroundStyle(.red)
+                    } else {
+                        Text(tempToken != nil ? "这个账号开了两步验证。"
+                             : "登录后自动开好 Codex 用的 Key 并切换过去，不用打开网站。已有账号直接登录即可。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            HStack {
+                if busy { ProgressView().controlSize(.small) }
+                Spacer()
+                Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(signUp && tempToken == nil ? "注册并登录" : "登录", action: submit)
+                    .keyboardShortcut(.defaultAction).disabled(!ready || busy)
+            }
+            .padding(.horizontal, 20).padding(.bottom, 16)
+        }
+        .frame(width: 400, height: signUp || tempToken != nil ? 330 : 290)
+    }
+
+    private func submit() {
+        let mail = email.trimmingCharacters(in: .whitespaces)
+        busy = true; error = nil
+        Task {
+            defer { busy = false }
+            let result: Result<Sub2API.Tokens, Sub2API.Failure>
+            if let tempToken {
+                result = await Sub2API.login2FA(tempToken: tempToken, code: code.trimmingCharacters(in: .whitespaces))
+            } else if signUp {
+                result = await Sub2API.register(email: mail, password: password, invitation: invitation.trimmingCharacters(in: .whitespaces))
+            } else {
+                switch await Sub2API.login(email: mail, password: password) {
+                case .success(.needsCode(let temp)): tempToken = temp; return
+                case .success(.tokens(let tokens)): result = .success(tokens)
+                case .failure(let failure): result = .failure(failure)
+                }
+            }
+            switch result {
+            case .success(let tokens):
+                if let message = await store.connectSub2API(email: mail, tokens: tokens) { error = message } else { dismiss() }
+            case .failure(let failure):
+                error = failure.message
+            }
+        }
+    }
+}
+
+/// The newest requests made with a Lazymice key.
+struct Sub2APIRecordsSheet: View {
+    let profile: CodexProfile
+    let signInAgain: () -> Void
+    @State private var records: [Sub2API.Record]?
+    @State private var error: String?
+    @State private var expired = false
+    @State private var loading = false
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("使用记录").font(.headline)
+                    Text(profile.sub2apiEmail ?? profile.displayName).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if loading { ProgressView().controlSize(.small) }
+                Button("刷新") { Task { await load() } }.disabled(loading)
+            }
+            .padding(16)
+            Divider()
+            Group {
+                if let error {
+                    VStack(spacing: 10) {
+                        Text(error).foregroundStyle(.secondary)
+                        if expired { Button("重新登录", action: signInAgain) }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let records, records.isEmpty {
+                    Text("还没有请求。").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let records {
+                    List(records) { RecordRow(record: $0) }.listStyle(.plain)
+                } else {
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            Divider()
+            HStack {
+                if let records, !records.isEmpty {
+                    Text("最近 \(records.count) 条，共 \(Self.usd(records.reduce(0) { $0 + $1.cost }))").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("完成") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 12)
+        }
+        .frame(width: 440, height: 480)
+        .task { await load() }
+    }
+
+    private func load() async {
+        loading = true
+        defer { loading = false }
+        switch await CodexStore.shared.sub2apiRecords(profile) {
+        case .success(let rows): records = rows; error = nil; expired = false
+        case .failure(let failure): error = failure.message; expired = failure.status == 401
+        }
+    }
+
+    static func usd(_ value: Double) -> String {
+        "$" + value.formatted(.number.precision(.fractionLength(value >= 1 ? 2 : 4)))
+    }
+
+    private struct RecordRow: View {
+        let record: Sub2API.Record
+
+        var body: some View {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(record.model).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
+                    Text(record.at.formatted(.dateTime.month(.twoDigits).day(.twoDigits).hour().minute().second()))
+                        .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
+                }
+                Spacer(minLength: 8)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(Sub2APIRecordsSheet.usd(record.cost)).font(.system(size: 12.5, weight: .semibold)).monospacedDigit()
+                    Text("输入 \(Self.tokens(record.input + record.cached))  输出 \(Self.tokens(record.output))")
+                        .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
+                        .help(record.cached > 0 ? "其中缓存命中 \(Self.tokens(record.cached))" : "")
+                }
+            }
+            .padding(.vertical, 3)
+        }
+
+        static func tokens(_ n: Int) -> String {
+            n >= 1_000_000 ? String(format: "%.1fM", Double(n) / 1_000_000) : n >= 1000 ? String(format: "%.1fk", Double(n) / 1000) : String(n)
         }
     }
 }

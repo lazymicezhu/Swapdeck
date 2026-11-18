@@ -18,11 +18,18 @@ struct CodexProfile: Codable, Hashable, Identifiable {
     var baseURL = ""
     /// Relay: yuan paid for one unit of its credit, to show balances in ¥.
     var cnyPerUnit = 1.0
+    /// Relay set up by signing in to the Lazymice relay (Sub2API): the account's email and the key's id there.
+    var sub2apiEmail: String?
+    var sub2apiKeyID: Int?
 
     /// Official: the whole auth.json; relay: the API key. Kept in 切号's private credential file.
     var secretAccount: String { "codex.\(kind.rawValue).\(id.uuidString)" }
     /// Relay: optional new-api system access token, for spend per day.
     var accessAccount: String { "codex.access.\(id.uuidString)" }
+    /// Lazymice relay: the account's login tokens, for the request log.
+    var sub2apiAccount: String { "codex.sub2api.\(id.uuidString)" }
+    var sub2apiRefreshAccount: String { "codex.sub2api-refresh.\(id.uuidString)" }
+    var isSub2API: Bool { kind == .relay && sub2apiEmail != nil }
 
     var displayName: String {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
@@ -637,7 +644,8 @@ final class CodexStore {
 
     func delete(_ id: UUID) {
         guard let profile = profiles.first(where: { $0.id == id }), id != activeID else { return }
-        try? Secrets.set([profile.secretAccount: nil, profile.accessAccount: nil])
+        try? Secrets.set([profile.secretAccount: nil, profile.accessAccount: nil,
+                          profile.sub2apiAccount: nil, profile.sub2apiRefreshAccount: nil])
         profiles.removeAll { $0.id == id }
         quotas[id] = nil; balances[id] = nil; errors[id] = nil
         save()
@@ -645,6 +653,40 @@ final class CodexStore {
     }
 
     func storedKey(_ profile: CodexProfile) -> Bool { Secrets.get(profile.secretAccount) != nil }
+
+    // MARK: Lazymice relay
+
+    /// After signing in: finds or opens the account's key, saves it as a relay (the same one on later sign-ins)
+    /// and switches Codex to it. Returns what went wrong, or nil.
+    func connectSub2API(email: String, tokens: Sub2API.Tokens) async -> String? {
+        let keyID: Int, key: String
+        switch await Sub2API.ensureKey(tokens.access) {
+        case .success(let opened): (keyID, key) = opened
+        case .failure(let failure): return failure.message
+        }
+        var profile = profiles.first { $0.kind == .relay && $0.sub2apiEmail?.lowercased() == email.lowercased() } ?? CodexProfile(kind: .relay)
+        profile.baseURL = Sub2API.site.absoluteString
+        profile.sub2apiEmail = email
+        profile.sub2apiKeyID = keyID
+        do {
+            try Secrets.set([profile.sub2apiAccount: tokens.access, profile.sub2apiRefreshAccount: tokens.refresh])
+        } catch { return "没能保存登录信息，检查一下本机文件权限。" }
+        guard saveRelay(profile, key: key) else { return "没能保存 Key，检查一下本机文件权限。" }
+        if profile.id != activeID { switchTo(profile.id) } else { message = "已登录 \(profile.displayName)。" }
+        return nil
+    }
+
+    /// The newest requests made with this relay's key; renews the login once when it has expired.
+    func sub2apiRecords(_ profile: CodexProfile) async -> Result<[Sub2API.Record], Sub2API.Failure> {
+        let expired = Sub2API.Failure(status: 401, message: "登录已失效，请重新登录。")
+        guard let token = Secrets.get(profile.sub2apiAccount) else { return .failure(expired) }
+        let result = await Sub2API.records(token, keyID: profile.sub2apiKeyID)
+        guard case .failure(let failure) = result, failure.status == 401 else { return result }
+        guard let refresh = Secrets.get(profile.sub2apiRefreshAccount),
+              case .success(let renewed) = await Sub2API.refresh(refresh) else { return .failure(expired) }
+        try? Secrets.set([profile.sub2apiAccount: renewed.access, profile.sub2apiRefreshAccount: renewed.refresh ?? refresh])
+        return await Sub2API.records(renewed.access, keyID: profile.sub2apiKeyID)
+    }
 
     // MARK: Quota
 
