@@ -34,6 +34,7 @@ struct CodexProfile: Codable, Hashable, Identifiable {
     var displayName: String {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         if !trimmed.isEmpty { return trimmed }
+        if let sub2apiEmail { return Sub2API.shortName(sub2apiEmail) }
         return kind == .official ? (email ?? "ChatGPT 账号") : (Endpoint.root(from: baseURL)?.host ?? "未命名中转")
     }
 

@@ -8,6 +8,19 @@ enum Sub2API {
     /// The group keys are opened in, and the name the key gets (reused on later sign-ins).
     static let groupName = "chatgpt"
     static let keyName = "Swapdeck"
+    /// The site wants an email; a plain user name (any script) gets this never-deliverable suffix instead.
+    static let nameSuffix = "@lm.local"
+
+    /// What the site is sent for what was typed: an email as is, a user name with the suffix.
+    static func account(_ typed: String) -> String {
+        let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.contains("@") ? trimmed : trimmed + nameSuffix
+    }
+
+    /// The other way round, for showing: the user name without the suffix.
+    static func shortName(_ account: String) -> String {
+        account.lowercased().hasSuffix(nameSuffix) ? String(account.dropLast(nameSuffix.count)) : account
+    }
 
     struct Failure: Error { var status: Int?; var message: String }
 
@@ -149,11 +162,11 @@ enum Sub2API {
 
     /// sub2api answers in English; the errors a friend is likely to meet, in Chinese.
     private static let reasons = [
-        "INVALID_CREDENTIALS": "邮箱或密码不对。",
+        "INVALID_CREDENTIALS": "账号或密码不对。",
         "USER_NOT_ACTIVE": "这个账号已被停用，请联系站长。",
-        "EMAIL_EXISTS": "这个邮箱已经注册过，直接登录就行。",
-        "EMAIL_RESERVED": "这个邮箱不能用来注册。",
-        "EMAIL_BLOCKED": "这个邮箱不能用来注册。",
+        "EMAIL_EXISTS": "这个用户名已经注册过。",
+        "EMAIL_RESERVED": "这个名字不能用来注册。",
+        "EMAIL_BLOCKED": "这个名字不能用来注册。",
         "EMAIL_SUFFIX_NOT_ALLOWED": "不支持这个邮箱后缀。",
         "EMAIL_VERIFY_REQUIRED": "站点开启了邮箱验证，暂时只能在网站上注册。",
         "REGISTRATION_DISABLED": "站点暂未开放注册。",

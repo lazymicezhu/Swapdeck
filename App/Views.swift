@@ -708,7 +708,7 @@ private struct CodexCase: View {
         .sheet(item: $editing) { CodexRelayEditor(profile: $0) }
         .sheet(item: $signingIn) { Sub2APILoginSheet(email: $0.email) }
         .sheet(item: $records) { profile in
-            Sub2APIRecordsSheet(profile: profile) { records = nil; signingIn = Sub2APISignIn(email: profile.sub2apiEmail ?? "") }
+            Sub2APIRecordsSheet(profile: profile) { records = nil; signingIn = Sub2APISignIn(email: profile.sub2apiEmail.map(Sub2API.shortName) ?? "") }
         }
         .alert("重命名", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("名称", text: $newName)
@@ -726,7 +726,7 @@ private struct CodexCase: View {
             if !inUse { Button("切换") { store.switchTo(id) } }
             if profile.isSub2API {
                 Button("使用记录…") { records = profile }
-                Button("重新登录…") { signingIn = Sub2APISignIn(email: profile.sub2apiEmail ?? "") }
+                Button("重新登录…") { signingIn = Sub2APISignIn(email: profile.sub2apiEmail.map(Sub2API.shortName) ?? "") }
             }
             if profile.kind == .relay { Button("编辑…") { editing = profile } }
             Button("重命名…") { newName = profile.name; renaming = profile }
@@ -910,7 +910,7 @@ struct Sub2APILoginSheet: View {
     private var ready: Bool {
         let mail = email.trimmingCharacters(in: .whitespaces)
         if tempToken != nil { return code.trimmingCharacters(in: .whitespaces).count == 6 }
-        guard mail.contains("@"), password.count >= (signUp ? 6 : 1) else { return false }
+        guard !mail.isEmpty, mail != "@", password.count >= (signUp ? 6 : 1) else { return false }
         return !signUp || !invitation.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
@@ -928,7 +928,7 @@ struct Sub2APILoginSheet: View {
                 .padding(2)
                 .background(Capsule().fill(Palette.inkText.opacity(0.08)))
                 .padding(.top, 16)
-                field("邮箱") { TextField("", text: $email) }
+                field("用户名") { TextField("", text: $email) }
                 field("密码") { SecureField("", text: $password) }
                 if signUp { field("邀请码") { TextField("", text: $invitation) } }
             } else {
@@ -995,7 +995,7 @@ struct Sub2APILoginSheet: View {
     }
 
     private func submit() {
-        let mail = email.trimmingCharacters(in: .whitespaces)
+        let mail = Sub2API.account(email)
         busy = true; error = nil
         Task {
             defer { busy = false }
@@ -1036,7 +1036,7 @@ struct Sub2APIRecordsSheet: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("使用记录").font(.headline)
-                    Text(profile.sub2apiEmail ?? profile.displayName).font(.caption).foregroundStyle(.secondary)
+                    Text(profile.sub2apiEmail.map(Sub2API.shortName) ?? profile.displayName).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 if loading { ProgressView().controlSize(.small) }
