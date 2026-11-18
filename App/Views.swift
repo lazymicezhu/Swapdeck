@@ -474,6 +474,50 @@ private struct CardCase<Menu: View>: View {
     }
 }
 
+/// What the dashed slot opens into: an ink card listing what can be added.
+private struct AddChoices: View {
+    let close: () -> Void
+    let choices: [(title: String, detail: String, enabled: Bool, action: () -> Void)]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("添加").font(.system(size: 11)).foregroundStyle(Palette.inkMuted)
+                Spacer()
+                Button(action: close) {
+                    Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Palette.inkMuted)
+                        .frame(width: 20, height: 20).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+            }
+            .padding(.bottom, 4)
+            ForEach(Array(choices.enumerated()), id: \.offset) { index, choice in
+                if index > 0 { Rectangle().fill(Palette.inkText.opacity(0.12)).frame(height: 1) }
+                Button { close(); choice.action() } label: {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(choice.title).font(.system(size: 14, weight: .semibold))
+                        Spacer()
+                        Text(choice.detail).font(.system(size: 11.5)).foregroundStyle(Palette.inkMuted)
+                        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Palette.inkMuted)
+                    }
+                    .padding(.vertical, 11)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!choice.enabled)
+                .opacity(choice.enabled ? 1 : 0.4)
+            }
+        }
+        .foregroundStyle(Palette.inkText)
+        .padding(.horizontal, 18).padding(.top, 14).padding(.bottom, 6)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Palette.ink))
+        .shadow(color: .black.opacity(0.22), radius: 15, y: 8)
+    }
+}
+
 /// The dashed slot at the bottom of the case.
 private struct AddSlot<Label: View>: View {
     @ViewBuilder let label: Label
@@ -595,6 +639,7 @@ private struct CodexCase: View {
     @State private var deleting: CodexProfile?
     @State private var signingIn: Sub2APISignIn?
     @State private var records: CodexProfile?
+    @State private var adding = false
 
     private var cards: [CardModel] {
         store.profiles.map { profile in
@@ -644,16 +689,21 @@ private struct CodexCase: View {
                 }
             }
         } footer: {
-            Menu {
-                Button("用 Lazymice 账号登录或注册…") { signingIn = Sub2APISignIn() }
-                Button("登录另一个 ChatGPT 账号") { store.beginLogin() }.disabled(store.pendingLogin)
-                Button("添加中转…") { editing = CodexProfile(kind: .relay) }
-            } label: {
-                AddSlot { Text("＋ 添加账号或中转") }
+            Group {
+                if adding {
+                    AddChoices(close: { adding = false }, choices: [
+                        ("Lazymice 账号", "登录或注册", true, { signingIn = Sub2APISignIn() }),
+                        ("ChatGPT 账号", "在 Codex 里登录", !store.pendingLogin, { store.beginLogin() }),
+                        ("中转", "填地址和 Key", true, { editing = CodexProfile(kind: .relay) }),
+                    ])
+                    .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .bottom)))
+                } else {
+                    Button { adding = true } label: { AddSlot { Text("＋ 添加账号或中转") } }
+                        .buttonStyle(.plain)
+                        .transition(.opacity)
+                }
             }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
+            .animation(.snappy(duration: 0.22), value: adding)
         }
         .sheet(item: $editing) { CodexRelayEditor(profile: $0) }
         .sheet(item: $signingIn) { Sub2APILoginSheet(email: $0.email) }
@@ -910,13 +960,11 @@ struct Sub2APILoginSheet: View {
         }
         .foregroundStyle(Palette.inkText)
         .tint(Palette.inkText)
-        .padding(18)
+        .padding(22)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Palette.ink))
-        .shadow(color: .black.opacity(0.22), radius: 15, y: 8)
-        .padding(20)
+        .background(Palette.ink)
         .frame(width: 360)
-        .background(Palette.window)
+        .presentationBackground(Palette.ink)
         .animation(.snappy(duration: 0.22), value: signUp)
         .animation(.snappy(duration: 0.22), value: tempToken)
         .animation(.snappy(duration: 0.22), value: error)
