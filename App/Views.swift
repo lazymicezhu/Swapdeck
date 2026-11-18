@@ -657,7 +657,7 @@ private struct CodexCase: View {
                                  usage: UsageStore.shared.series(account: profile.accountID))
             case .relay:
                 let amount = store.balances[profile.id].map { Fmt.yuanDown($0.credit * profile.cnyPerUnit, 2) }
-                return CardModel(id: profile.id, kind: profile.isSub2API ? "Lazymice" : "中转", title: profile.displayName,
+                return CardModel(id: profile.id, kind: profile.connectsDirectly ? "Lazymice" : "中转", title: profile.displayName,
                                  body: .balance(host: profile.root?.host ?? "地址无效", amount: amount),
                                  note: amount == nil ? store.errors[profile.id] : nil,
                                  usage: UsageStore.shared.series(relay: profile.id, ratio: profile.cnyPerUnit))
@@ -694,11 +694,10 @@ private struct CodexCase: View {
                     AddChoices(close: { adding = false }, choices: [
                         ("Lazymice 账号", "登录或注册", true, { signingIn = Sub2APISignIn() }),
                         ("ChatGPT 账号", "在 Codex 里登录", !store.pendingLogin, { store.beginLogin() }),
-                        ("中转", "填地址和 Key", true, { editing = CodexProfile(kind: .relay) }),
                     ])
                     .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .bottom)))
                 } else {
-                    Button { adding = true } label: { AddSlot { Text("＋ 添加账号或中转") } }
+                    Button { adding = true } label: { AddSlot { Text("＋ 添加账号") } }
                         .buttonStyle(.plain)
                         .transition(.opacity)
                 }
@@ -758,7 +757,9 @@ private struct SettingsSheet: View {
                     Toggle("窗口始终置顶", isOn: $prefs.onTop)
                     Toggle("登录时打开", isOn: $prefs.launchAtLogin)
                 } footer: {
-                    Text("Codex 使用中转时经本应用转发，保持它运行。").font(.caption).foregroundStyle(.secondary)
+                    if codex.relays.contains(where: { !$0.connectsDirectly }) {
+                        Text("Codex 使用第三方中转时经本应用转发，保持它运行。").font(.caption).foregroundStyle(.secondary)
+                    }
                 }
                 Section("Claude") {
                     Toggle("切换后重启 Claude", isOn: $claude.restartClaude)

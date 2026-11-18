@@ -32,7 +32,7 @@ struct CodexProfile: Codable, Hashable, Identifiable {
     var isSub2API: Bool { kind == .relay && sub2apiEmail != nil }
     /// Lazymice (sub2api) speaks Codex's Responses WebSocket, so Codex connects to it straight. Going through the
     /// loopback forwarder breaks behind a system proxy (Clash and the like send 127.0.0.1 to a remote node: empty 502).
-    var connectsDirectly: Bool { isSub2API }
+    var connectsDirectly: Bool { kind == .relay && (isSub2API || root?.host?.lowercased() == Sub2API.site.host?.lowercased()) }
 
     var displayName: String {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
