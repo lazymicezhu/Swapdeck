@@ -3,6 +3,15 @@
   <channel>
     <title>Swapdeck</title>
     <item>
+      <title>1.2.4</title>
+      <pubDate>Wed, 18 Nov 2026 16:42:23 +0800</pubDate>
+      <sparkle:version>8</sparkle:version>
+      <sparkle:shortVersionString>1.2.4</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<p>Codex 的添加菜单只保留「Lazymice中转」和「官方订阅」；手动填地址加的 Lazymice 中转也改为直连站点。</p>]]></description>
+      <enclosure url="https://github.com/lazymicezhu/Swapdeck/releases/download/v1.2.4/Swapdeck-1.2.4.zip" type="application/octet-stream" sparkle:edSignature="jZYYoAX0GgPHQYP5iZSl4DG1DaiXRi4ve1nvFr0I41ubMctu3U5wVl73x3+rvEwvca2gbYSWa51JuvoZ9G8SBg==" length="3372226" />
+    </item>
+    <item>
       <title>1.2.3</title>
       <pubDate>Wed, 18 Nov 2026 16:34:04 +0800</pubDate>
       <sparkle:version>7</sparkle:version>
