@@ -3,6 +3,15 @@
   <channel>
     <title>Swapdeck</title>
     <item>
+      <title>1.2.1</title>
+      <pubDate>Wed, 18 Nov 2026 14:31:54 +0800</pubDate>
+      <sparkle:version>5</sparkle:version>
+      <sparkle:shortVersionString>1.2.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<p>切到中转后，Codex 的模型列表改用中转提供的列表（和官方账号一致），不再显示 Codex 内置的旧列表。</p>]]></description>
+      <enclosure url="https://github.com/lazymicezhu/Swapdeck/releases/download/v1.2.1/Swapdeck-1.2.1.zip" type="application/octet-stream" sparkle:edSignature="1wf7EFi6X6lUc56kbQhrYUj8ffFfgDB9Y6TomcLYu0O+9OlG5YXtcKuSxo69uI6l6rwXlLJ/L/suRGGlOotZDQ==" length="3162465" />
+    </item>
+    <item>
       <title>1.2.0</title>
       <pubDate>Mon, 16 Nov 2026 22:50:13 +0800</pubDate>
       <sparkle:version>4</sparkle:version>
