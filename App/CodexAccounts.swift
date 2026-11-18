@@ -30,6 +30,9 @@ struct CodexProfile: Codable, Hashable, Identifiable {
     var sub2apiAccount: String { "codex.sub2api.\(id.uuidString)" }
     var sub2apiRefreshAccount: String { "codex.sub2api-refresh.\(id.uuidString)" }
     var isSub2API: Bool { kind == .relay && sub2apiEmail != nil }
+    /// Lazymice (sub2api) speaks Codex's Responses WebSocket, so Codex connects to it straight. Going through the
+    /// loopback forwarder breaks behind a system proxy (Clash and the like send 127.0.0.1 to a remote node: empty 502).
+    var connectsDirectly: Bool { isSub2API }
 
     var displayName: String {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
@@ -423,6 +426,17 @@ final class CodexStore {
             return
         }
         guard let relay, let root = relay.root else { return }
+        if relay.connectsDirectly {
+            CodexRelayProxy.shared.setUpstream(nil)
+            if let direct = relay.codexBaseURL, direct != base {
+                try? CodexFiles.setBaseURL(direct)
+                message = "\(relay.displayName) 改为直连，不再经过本机转发，重启 Codex 后生效。"
+            }
+            if let key = Secrets.get(relay.secretAccount) {
+                Task { await RelayCatalog.install(root: root, key: key) }
+            }
+            return
+        }
         let wanted = base.flatMap(URL.init(string:))?.port.map(UInt16.init)
         guard CodexRelayProxy.shared.start(upstream: root, wanted: CodexFiles.isProxy(base) ? wanted : nil) != nil,
               let proxyURL = CodexRelayProxy.shared.codexBaseURL else {
@@ -541,6 +555,16 @@ final class CodexStore {
                 let catalog = await RelayCatalog.fetch(root: root, key: key)
                 switching = false
                 apply(target, running: running) {
+                    if target.connectsDirectly {
+                        guard let direct = target.codexBaseURL else { throw SwitchFailure.message("\(target.displayName) 的地址无效。") }
+                        let auth: [String: Any] = ["auth_mode": "apikey", "OPENAI_API_KEY": key]
+                        try CodexFiles.writeAuth(try JSONSerialization.data(withJSONObject: auth, options: [.prettyPrinted]))
+                        try CodexFiles.setBaseURL(direct)
+                        if let catalog { try CodexFiles.writeRelayCatalog(catalog) }
+                        try CodexFiles.setRelayCatalog(catalog != nil)
+                        CodexRelayProxy.shared.setUpstream(nil)
+                        return
+                    }
                     // Codex talks to the loopback forwarder, which turns away its WebSocket attempt (see CodexRelayProxy).
                     guard CodexRelayProxy.shared.start(upstream: root) != nil, let base = CodexRelayProxy.shared.codexBaseURL else {
                         throw SwitchFailure.message("本机转发没能启动（端口 47811–47830 都被占用），Codex 仍用原来的账号。")
@@ -631,7 +655,11 @@ final class CodexStore {
             if !trimmed.isEmpty, let data = try? JSONSerialization.data(withJSONObject: ["auth_mode": "apikey", "OPENAI_API_KEY": trimmed]) {
                 try? CodexFiles.writeAuth(data); lastAuthDate = CodexFiles.authModified()
             }
-            CodexRelayProxy.shared.setUpstream(root)
+            if profile.connectsDirectly {
+                if let direct = profile.codexBaseURL { try? CodexFiles.setBaseURL(direct) }
+            } else {
+                CodexRelayProxy.shared.setUpstream(root)
+            }
         }
         Task { await refresh(profile) }
         return true
