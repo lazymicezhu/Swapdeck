@@ -121,6 +121,8 @@ final class ClaudeStore {
 
     private(set) var providers: [ClaudeProvider] = []
     private(set) var balances: [UUID: (credit: Double, at: Date)] = [:]
+    /// 5-hour and weekly windows, for relays that sell seats (sub2api `subscription`).
+    private(set) var quotas: [UUID: RelayQuota] = [:]
     private(set) var errors: [UUID: String] = [:]
     private(set) var refreshing = false
     private(set) var refreshedAt: Date?
@@ -228,7 +230,7 @@ final class ClaudeStore {
         guard let provider = providers.first(where: { $0.id == id }), id != activeID else { return }
         try? Secrets.set([provider.keyAccount: nil, provider.accessAccount: nil])
         providers.removeAll { $0.id == id }
-        balances[id] = nil; errors[id] = nil
+        balances[id] = nil; quotas[id] = nil; errors[id] = nil
         save()
     }
 
@@ -255,11 +257,11 @@ final class ClaudeStore {
 
     func refresh(_ provider: ClaudeProvider) async {
         guard let key = Secrets.get(provider.keyAccount), let root = provider.root else { errors[provider.id] = "没有 API Key"; return }
-        switch await RelayBalance.fetch(root: root, key: key) {
-        case .success(let credit):
-            balances[provider.id] = (credit, Date()); errors[provider.id] = nil
-            UsageStore.shared.recordBalance(provider.id, credit: credit)
-        case .failure(let failure): balances[provider.id] = nil; errors[provider.id] = failure.message
+        switch await RelayBalance.read(root: root, key: key) {
+        case .success(let reading):
+            balances[provider.id] = (reading.credit, Date()); quotas[provider.id] = reading.quota; errors[provider.id] = nil
+            UsageStore.shared.recordBalance(provider.id, credit: reading.credit)
+        case .failure(let failure): balances[provider.id] = nil; quotas[provider.id] = nil; errors[provider.id] = failure.message
         }
         await UsageStore.shared.refreshRelay(provider.id, root: root, key: key, accessToken: Secrets.get(provider.accessAccount))
     }

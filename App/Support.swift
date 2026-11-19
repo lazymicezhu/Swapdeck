@@ -109,9 +109,17 @@ enum Endpoint {
     }
 }
 
+/// A relay seat's rate-limit windows (sub2api's /v1/usage `subscription`), shown like a ChatGPT account's.
+struct RelayQuota: Hashable {
+    var plan: String?
+    var fiveHour: CodexWindow?
+    var week: CodexWindow?
+}
+
 /// Remaining balance of a relay key: new-api's /api/usage/token/, else a /v1/usage that reports `balance`.
 enum RelayBalance {
     struct Failure: Error { var status: Int?; var message: String }
+    struct Reading { var credit: Double; var quota: RelayQuota? }
 
     private static let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
@@ -120,17 +128,24 @@ enum RelayBalance {
     }()
 
     static func fetch(root: URL, key: String) async -> Result<Double, Failure> {
+        await read(root: root, key: key).map(\.credit)
+    }
+
+    /// The balance plus, when the relay reports them, its 5-hour and weekly windows (from the same request).
+    static func read(root: URL, key: String) async -> Result<Reading, Failure> {
         let newAPI = await getJSON(root.appendingPathComponent("api/usage/token/"), key: key)
         if case .success(let object) = newAPI, let data = object["data"] as? [String: Any], data["object"] as? String == "token_usage" {
             let account = number((data["user_quota"] as? [String: Any])?["total_available"])
             let own = number(data["total_available"])
             let available = (data["unlimited_quota"] as? Bool ?? false) ? (account ?? own) : (own ?? account)
-            if let available { return .success(available / 500_000) }
+            if let available { return .success(Reading(credit: available / 500_000)) }
         }
         if case .failure(let failure) = newAPI, failure.status == 401 || failure.status == 403 { return .failure(failure) }
         switch await getJSON(root.appendingPathComponent("v1/usage"), key: key) {
         case .success(let object):
-            if let balance = number(object["balance"]) ?? number(object["remaining"]) { return .success(balance) }
+            if let balance = number(object["balance"]) ?? number(object["remaining"]) {
+                return .success(Reading(credit: balance, quota: quota(object)))
+            }
             return .failure(Failure(status: 404, message: "无余额接口"))
         case .failure(let failure):
             return .failure(failure.status == 404 || failure.status == nil && failure.message == "无余额接口"
@@ -157,6 +172,34 @@ enum RelayBalance {
         return .success(object)
     }
 
+    private static func quota(_ object: [String: Any]) -> RelayQuota? {
+        guard let sub = object["subscription"] as? [String: Any] else { return nil }
+        let five = window(sub, "five_hour", seconds: 5 * 3600)
+        let week = window(sub, "weekly", seconds: 7 * 86400)
+        guard five != nil || week != nil else { return nil }
+        let plan = (object["planName"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        return RelayQuota(plan: plan, fiveHour: five, week: week)
+    }
+
+    /// A window starts with its first request and resets `seconds` later. Not started, or already past its end, it is
+    /// full and has no reset time yet (distantPast, so no countdown shows).
+    private static func window(_ sub: [String: Any], _ prefix: String, seconds: Double) -> CodexWindow? {
+        guard let limit = number(sub["\(prefix)_limit_usd"]), limit > 0 else { return nil }
+        let used = number(sub["\(prefix)_usage_usd"]) ?? 0
+        if let start = date(sub["\(prefix)_window_start"]), start.addingTimeInterval(seconds) > Date() {
+            return CodexWindow(usedPercent: min(100, max(0, used / limit * 100)), seconds: seconds, resetAt: start.addingTimeInterval(seconds),
+                               leftUSD: max(0, limit - used))
+        }
+        return CodexWindow(usedPercent: 0, seconds: seconds, resetAt: .distantPast, leftUSD: limit)
+    }
+
+    /// 2026-11-19T23:02:36.363519+08:00 (any number of fraction digits, or none).
+    private static func date(_ value: Any?) -> Date? {
+        guard let text = value as? String else { return nil }
+        let plain = text.replacingOccurrences(of: #"\.\d+"#, with: "", options: .regularExpression)
+        return ISO8601DateFormatter().date(from: plain)
+    }
+
     private static func number(_ value: Any?) -> Double? {
         if let d = value as? Double { return d }
         if let i = value as? Int { return Double(i) }
@@ -169,6 +212,10 @@ enum Fmt {
     static func yuan(_ value: Double?, _ digits: Int) -> String {
         guard let value else { return "—" }
         return "¥" + value.formatted(.number.precision(.fractionLength(digits)).grouping(.automatic))
+    }
+    /// Cut to cents, not rounded, so it never shows more than there is.
+    static func usd(_ value: Double) -> String {
+        "$" + ((value * 100).rounded(.down) / 100).formatted(.number.precision(.fractionLength(2)).grouping(.automatic))
     }
     /// Cut, not rounded, so a balance never shows more than there is.
     static func yuanDown(_ value: Double?, _ digits: Int) -> String {

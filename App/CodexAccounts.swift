@@ -51,6 +51,8 @@ struct CodexWindow: Codable, Hashable {
     var usedPercent: Double
     var seconds: Double
     var resetAt: Date
+    /// Relay seats only: US dollars still to spend in this window (ChatGPT reports percentages alone).
+    var leftUSD: Double? = nil
     var remaining: Double { max(0, min(100, 100 - usedPercent)) }
 }
 
@@ -386,7 +388,7 @@ final class CodexStore {
     private(set) var pendingLogin: Bool { didSet { defaults.set(pendingLogin, forKey: "codex.pendingLogin") } }
     var restartCodex: Bool { didSet { defaults.set(restartCodex, forKey: "codex.restart") } }
 
-    static let refreshEvery: TimeInterval = 5 * 60
+    static let refreshEvery: TimeInterval = 2 * 60
     private let defaults = UserDefaults.standard
     private static let file = "codex-profiles.json"
     private static let quotaFile = "codex-quotas.json"

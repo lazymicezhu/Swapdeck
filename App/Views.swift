@@ -162,8 +162,10 @@ private struct FrontCard: View {
             }
             switch card.body {
             case .quota(_, let five, let week, let credits):
-                Meter(label: "5 小时", window: five).padding(.top, 20)
-                Meter(label: "7 天", window: week).padding(.top, 14)
+                // Both while loading; a relay that limits only one window shows just that one.
+                let both = five == nil && week == nil
+                if both || five != nil { Meter(label: "5 小时", window: five).padding(.top, 20) }
+                if both || week != nil { Meter(label: "7 天", window: week).padding(.top, five == nil && !both ? 20 : 14) }
                 if card.usage == nil, let credits {
                     HStack {
                         Text("Credits").foregroundStyle(Palette.inkMuted)
@@ -231,9 +233,24 @@ private struct Meter: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(label).foregroundStyle(Palette.inkMuted)
-                Spacer()
+                if let window, !window.exhausted, window.resetAt > Date() {
+                    // Refreshes itself so the countdown never goes stale while the window is open.
+                    TimelineView(.periodic(from: .now, by: 30)) { context in
+                        Text("\(ResetText.countdown(to: window.resetAt, now: context.date))后重置")
+                            .font(.system(size: 11)).monospacedDigit()
+                            .foregroundStyle(Palette.inkMuted)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 4)
+                if let left = window?.leftUSD {
+                    Text(Fmt.usd(left))
+                        .font(.system(size: 11.5)).monospacedDigit()
+                        .foregroundStyle(Palette.inkMuted)
+                        .lineLimit(1)
+                }
                 Text(window.map { "\(Int($0.remaining.rounded()))%" } ?? "—")
                     .font(.system(size: 13, weight: .semibold)).monospacedDigit()
                     .foregroundStyle(tint ?? Palette.inkText)
@@ -410,11 +427,11 @@ private struct BackCard: View {
                 }
             }
             if case .quota(_, let five, let week, _) = card.body {
-                if let week {
+                if five != nil || week != nil {
                     // Same order as the front card: 5 hours above 7 days. Exact numbers on hover.
                     VStack(spacing: 5) {
-                        MiniRow(window: five, showsReset: true)
-                        MiniRow(window: week, showsReset: false)
+                        if week == nil || five != nil { MiniRow(window: five, showsReset: true) }
+                        if let week { MiniRow(window: week, showsReset: five == nil) }
                     }
                     .help(quotaHelp(five: five, week: week))
                 } else {
@@ -430,9 +447,15 @@ private struct BackCard: View {
 
     private var isQuota: Bool { if case .quota = card.body { return true } else { return false } }
 
-    private func quotaHelp(five: CodexWindow?, week: CodexWindow) -> String {
-        let fiveText = five.map { "5 小时剩余 \(Int($0.remaining.rounded()))%，\(ResetText.detail($0.resetAt))" } ?? "5 小时 —"
-        return "\(fiveText)\n7 天剩余 \(Int(week.remaining.rounded()))%，\(ResetText.detail(week.resetAt))"
+    private func quotaHelp(five: CodexWindow?, week: CodexWindow?) -> String {
+        func line(_ label: String, _ window: CodexWindow?) -> String? {
+            guard let window else { return nil }
+            let reset = window.resetAt > Date() ? "，\(ResetText.detail(window.resetAt))" : ""
+            let amount = window.leftUSD.map { "（\(Fmt.usd($0))）" } ?? ""
+            return "\(label)剩余 \(Int(window.remaining.rounded()))%\(amount)\(reset)"
+        }
+        let lines = [line("5 小时", five), line("7 天", week)].compactMap { $0 }
+        return lines.isEmpty ? "5 小时 —" : lines.joined(separator: "\n")
     }
 
     private var summaryIsNote: Bool {
@@ -590,8 +613,11 @@ private struct ClaudeCase: View {
     private var cards: [CardModel] {
         store.providers.map { provider in
             let amount = store.balances[provider.id].map { Fmt.yuanDown($0.credit * provider.cnyPerUnit, 2) }
+            // A seat with 5-hour / weekly limits reads like a ChatGPT account; a pay-as-you-go key shows its balance.
+            let body: CardModel.Body = store.quotas[provider.id].map { .quota(plan: $0.plan, five: $0.fiveHour, week: $0.week, credits: nil) }
+                ?? .balance(host: provider.root?.host ?? "地址无效", amount: amount)
             return CardModel(id: provider.id, kind: "中转", title: provider.displayName,
-                             body: .balance(host: provider.root?.host ?? "地址无效", amount: amount),
+                             body: body,
                              note: amount == nil ? store.errors[provider.id] : nil,
                              usage: UsageStore.shared.series(relay: provider.id, ratio: provider.cnyPerUnit))
         }
