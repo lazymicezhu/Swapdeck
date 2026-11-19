@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ClaudeStore.shared.activate()
             CodexStore.shared.activate()
             WindowManager.shared.showMain()
+            MenuBarController.shared.start()
             Updates.shared.start()
             let center = NSWorkspace.shared.notificationCenter
             center.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { _ in
