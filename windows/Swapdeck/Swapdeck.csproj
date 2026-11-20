@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType><TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Swapdeck</AssemblyName><Version>0.1.12</Version>
+    <DebugType>none</DebugType><ApplicationIcon>Swapdeck.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Tomlyn" Version="0.19.0"/><PackageReference Include="Velopack" Version="1.2.161"/>
+    <FrameworkReference Include="Microsoft.AspNetCore.App"/>
+    <Resource Include="Swapdeck.ico"/><Content Include="prices.json" CopyToOutputDirectory="PreserveNewest"/>
+    <EmbeddedResource Include="update-public.pem"/>
+  </ItemGroup>
+</Project>
