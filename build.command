@@ -48,6 +48,7 @@ lipo -create "$OUT/$NAME-arm64" "$OUT/$NAME-x86_64" -output "$APP/Contents/MacOS
 cp App/Info.plist "$APP/Contents/Info.plist"
 cp -R App/Resources/*.lproj "$APP/Contents/Resources/"
 cp App/Resources/*Template*.png "$APP/Contents/Resources/"  # menu bar logos
+cp App/Resources/prices.json "$APP/Contents/Resources/"  # LiteLLM prices until the first download
 ditto --norsrc --noextattr Vendor/Sparkle.framework "$APP/Contents/Frameworks/Sparkle.framework"
 # The XPC services are only for sandboxed apps.
 rm -rf "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices" "$APP/Contents/Frameworks/Sparkle.framework/XPCServices"

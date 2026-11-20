@@ -126,30 +126,69 @@ enum RelayUsage {
     }
 }
 
+/// Model prices from LiteLLM's catalog (github.com/BerriAI/litellm, model_prices_and_context_window.json), per
+/// token in US dollars: downloaded at most once a day into prices.json, else the copy bundled with the app. Only the
+/// gpt-* and claude-* rows are kept, with their token prices (not batch, flex, audio, image and the like).
+enum Prices {
+    static let source = URL(string: "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json")!
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var table: [String: [String: Double]]?
+
+    static func row(_ model: String) -> [String: Double]? {
+        lock.lock(); defer { lock.unlock() }
+        if table == nil { table = load() }
+        return table?[model]
+    }
+
+    private static func load() -> [String: [String: Double]] {
+        for url in [Disk.url("prices.json"), Bundle.main.url(forResource: "prices", withExtension: "json")].compactMap({ $0 }) {
+            if let data = try? Data(contentsOf: url),
+               let t = try? JSONDecoder().decode([String: [String: Double]].self, from: data), !t.isEmpty { return t }
+        }
+        return [:]
+    }
+
+    static func refresh() async {
+        let file = Disk.url("prices.json")
+        if let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+           Date().timeIntervalSince(date) < 86_400 { return }
+        guard let (data, response) = try? await URLSession.shared.data(from: source),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let all = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        let kept = keep(all)
+        guard kept.count > 20, let out = try? JSONEncoder().encode(kept) else { return }
+        try? out.write(to: file, options: .atomic)
+        lock.withLock { table = kept }
+    }
+
+    private static let suffixes = ["_cost", "_token", "_tokens", "_priority", "_ultrafast", "_1hr"]
+    private static let skipped = ["batch", "flex", "audio", "image", "search", "reasoning", "video", "character", "second", "pixel", "query"]
+
+    private static func keep(_ all: [String: Any]) -> [String: [String: Double]] {
+        var out: [String: [String: Double]] = [:]
+        for (model, value) in all where !model.contains("/") && (model.hasPrefix("gpt-") || model.hasPrefix("claude-")) {
+            guard let fields = value as? [String: Any] else { continue }
+            var row: [String: Double] = [:]
+            for (field, v) in fields where field.contains("cost") && suffixes.contains(where: field.hasSuffix)
+                && !skipped.contains(where: field.contains) {
+                guard let n = v as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() else { continue }
+                row[field] = n.doubleValue
+            }
+            if !row.isEmpty { out[model] = row }
+        }
+        return out
+    }
+}
+
 /// ChatGPT accounts' Codex use priced at OpenAI's API rates, per day, in US dollars — the way OpenUsage does it
 /// (github.com/robinebers/openusage, Providers/Codex): every rollout under `sessions/` and `archived_sessions/`,
 /// one event per `token_count` (`last_token_usage`, else the rise of the running total; an unchanged total is a
 /// repeated snapshot), the parent history a fork or subagent replays at start skipped, priced as uncached input +
-/// cached input + output with the long-context rate above 272k prompt tokens and the fast / ultrafast tier
-/// multipliers. codex-auto-review is free since 2026-10-06; models without a known price are left out.
+/// cached input + output at LiteLLM's prices (`Prices`): the long-context rate above 272k prompt tokens and the
+/// priority (fast) / ultrafast tier. codex-auto-review is free since 2026-10-06; a model with no price yet waits
+/// in `pending` until LiteLLM has one.
 /// Each file is attributed to the account its thread belongs to (~/.codex/state_5.sqlite), else the signed-in one.
 enum CodexTokenUsage {
-    struct Rates { var input: Double; var cached: Double; var output: Double; var long: (Double, Double, Double)? }
-    /// Per 1M tokens (OpenAI API, as in OpenUsage's catalog and CodexUsagePricing).
-    static let rates: [String: Rates] = [
-        // GPT-6.2 (2026-11-17): above 272k prompt tokens 2x input and cache, 1.5x output, like the earlier ones.
-        "gpt-6.2-astra": Rates(input: 8, cached: 0.4, output: 40, long: (16, 0.8, 60)),
-        "gpt-6.2-sol": Rates(input: 2, cached: 0.1, output: 10, long: (4, 0.2, 15)),
-        "gpt-6-astra": Rates(input: 10, cached: 1, output: 50, long: (20, 2, 75)),
-        "gpt-6.1-sol": Rates(input: 2, cached: 0.1, output: 10, long: (4, 0.2, 15)),
-        "gpt-6.1-terra": Rates(input: 1, cached: 0.05, output: 5, long: nil),
-        "gpt-6-sol": Rates(input: 2, cached: 0.2, output: 10, long: (4, 0.4, 15)),
-        "gpt-6-luna": Rates(input: 0.1, cached: 0.01, output: 0.5, long: (0.2, 0.02, 0.75)),
-        // Earlier models, still in old rollouts (list prices; Terra after its 2026-07-30 cut).
-        "gpt-5.6-sol": Rates(input: 5, cached: 0.5, output: 30, long: (10, 1, 45)),
-        "gpt-5.6-terra": Rates(input: 2, cached: 0.2, output: 12, long: (4, 0.4, 18)),
-        "gpt-5.5": Rates(input: 5, cached: 0.5, output: 30, long: (10, 1, 45)),
-    ]
     static let autoReviewFreeSince = ISO8601DateFormatter().date(from: "2026-10-06T00:00:00Z")!
 
     /// Strips a dated snapshot suffix (-2026-11-01 / -20261101).
@@ -158,16 +197,26 @@ enum CodexTokenUsage {
         return model
     }
 
-    static func cost(model: String, at date: Date, input: Double, cached: Double, output: Double, fast: Bool, ultrafast: Bool) -> Double? {
+    static func cost(model: String, at date: Date, input: Double, cached: Double, output: Double, fast: Bool, ultrafast: Bool,
+                     long: Bool? = nil) -> Double? {
         if model == "codex-auto-review" { return date >= autoReviewFreeSince ? 0 : nil }
         let base = model == "gpt-reserve" ? "gpt-6-luna" : baseModel(model)
-        guard let r = rates[base] else { return nil }
+        guard let row = Prices.row(base) else { return nil }
+        let isLong = long ?? (input > 272_000)
+        let tier = ultrafast ? "_ultrafast" : fast ? "_priority" : ""
+        func rate(_ field: String) -> Double? {
+            let size = isLong && row[field + "_above_272k_tokens"] != nil ? "_above_272k_tokens" : ""
+            guard let plain = row[field + size] else { return nil }
+            if tier.isEmpty { return plain }
+            if let exact = row[field + size + tier] { return exact }
+            // No price for this tier at this size: the tier's ratio at short context, else priority's, else 2x.
+            for t in [tier, "_priority"] { if let a = row[field + t], let b = row[field], b > 0 { return plain * a / b } }
+            return plain * 2
+        }
+        guard let i = rate("input_cost_per_token"), let o = rate("output_cost_per_token") else { return nil }
+        let c = rate("cache_read_input_token_cost") ?? i
         let cachedIn = min(cached, input), uncached = max(0, input - cachedIn)
-        var (i, c, o) = (r.input, r.cached, r.output)
-        if let long = r.long, input > 272_000 { (i, c, o) = long }
-        var usd = (uncached * i + cachedIn * c + output * o) / 1_000_000
-        if ultrafast, base.hasSuffix("-astra") { usd *= 6 } else if fast || ultrafast { usd *= 2 }
-        return usd
+        return uncached * i + cachedIn * c + output * o
     }
 
     struct Totals: Codable, Equatable { var input = 0.0, cached = 0.0, output = 0.0, total = 0.0 }
@@ -182,8 +231,42 @@ enum CodexTokenUsage {
         var gate: Double?
         var days: [String: Double] = [:]
         var models: ModelDays = [:]
+        /// Tokens of models with no price yet: day → "model|long|tier". Priced (and fixed) once a price is added.
+        var pending: [String: [String: Pending]]?
     }
+    /// Input here is uncached input only.
+    struct Pending: Codable { var input = 0.0, cached = 0.0, output = 0.0 }
+    /// A day's dollars are fixed once counted, at the price of the day they were read; a later price change only
+    /// touches what comes after. A model priced later is filled in from `pending` — new prices never need a rescan,
+    /// so the version only changes when what is read from the rollouts changes.
     struct Cache: Codable { var version = 7; var files: [String: FileProgress] = [:] }
+
+    /// Prices what was waiting for a price, into the file's own days, so it is fixed from now on.
+    private static func pricePending(_ p: inout FileProgress) {
+        guard var pending = p.pending else { return }
+        for (day, keys) in pending {
+            guard let date = dayParser.date(from: day + " 12") else { continue }
+            for (key, t) in keys {
+                let parts = key.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+                guard parts.count == 3,
+                      let usd = cost(model: parts[0], at: date, input: t.input + t.cached, cached: t.cached, output: t.output,
+                                     fast: parts[2] == "fast", ultrafast: parts[2] == "ultrafast", long: parts[1] == "1") else { continue }
+                if usd > 0 { p.days[day, default: 0] += usd }
+                p.models[day, default: [:]][baseModel(parts[0]), default: TokenDay()].usd += usd
+                pending[day]?[key] = nil
+            }
+            if pending[day]?.isEmpty == true { pending[day] = nil }
+        }
+        p.pending = pending.isEmpty ? nil : pending
+    }
+
+    /// yyyy-MM-dd at noon, local.
+    static let dayParser: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd HH"
+        return f
+    }()
 
     struct Scan { var cost: [String: [String: Double]] = [:]; var models: [String: ModelDays] = [:] }
 
@@ -235,6 +318,7 @@ enum CodexTokenUsage {
                     if size > progress.offset { read(url.path, into: &progress) }
                 }
                 progress.size = size
+                pricePending(&progress)
                 cache.files[url.path] = progress
                 live.insert(url.path)
                 let plainPath = compressed ? String(url.path.dropLast(4)) : url.path
@@ -360,6 +444,15 @@ enum CodexTokenUsage {
                                fast: p.fast, ultrafast: p.ultrafast)
                 let day = UsageStore.dayKey(when)
                 let cachedIn = min(usage.cached, usage.input)
+                if usd == nil {
+                    let tier = p.ultrafast ? "ultrafast" : p.fast ? "fast" : ""
+                    let key = "\(model)|\(usage.input > 272_000 ? 1 : 0)|\(tier)"
+                    var waiting = p.pending ?? [:]
+                    waiting[day, default: [:]][key, default: Pending()].input += usage.input - cachedIn
+                    waiting[day, default: [:]][key, default: Pending()].cached += cachedIn
+                    waiting[day, default: [:]][key, default: Pending()].output += usage.output
+                    p.pending = waiting
+                }
                 let tokens = TokenDay(input: usage.input - cachedIn, output: usage.output, cacheRead: cachedIn, usd: usd ?? 0)
                 let name = baseModel(model)
                 p.models[day, default: [:]][name, default: TokenDay()] += tokens
@@ -372,22 +465,18 @@ enum CodexTokenUsage {
 }
 
 /// Claude Code's use per day and model, from its session records (~/.claude/projects, subagents included), priced
-/// at Anthropic's list price — the same table as the yuliang-band mod and 余量 (turn-sync.py). Only the share
+/// at Anthropic's list price, from LiteLLM's catalog (`Prices`). Only the share
 /// between models is used: the money itself comes from what the relays charged. Read incrementally like Codex's logs;
 /// a message streamed over several lines carries the same id, and only its last line counts.
 enum ClaudeTokenUsage {
-    /// Per 1M tokens: input, output, 5-minute cache write, cache read; a 1-hour cache write is twice the input price.
-    static let rates: [String: (Double, Double, Double, Double)] = [
-        "claude-fable-5-2": (8, 40, 10, 0.20),
-        "claude-fable-5-1": (10, 50, 12.5, 0.25),
-        "claude-fable-5": (10, 50, 12.5, 1.0),
-        "claude-opus-5-5": (4, 20, 5, 0.20),
-        "claude-sonnet-5": (2, 10, 2.5, 0.20),
-        "claude-sonnet-5-5": (2, 10, 2.5, 0.20),
-        "claude-haiku-5-5": (0.10, 0.50, 0.125, 0.01),
-        "claude-haiku-4-5": (1, 5, 1.25, 0.10),
-        "claude-haiku-4-5-20251001": (1, 5, 1.25, 0.10),
-    ]
+    /// Per token, from LiteLLM (`Prices`); a dated id falls back to its model's row.
+    struct Rates { var input, output, write, hourWrite, read: Double }
+    static func rates(_ model: String) -> Rates? {
+        guard let r = Prices.row(model) ?? Prices.row(CodexTokenUsage.baseModel(model)),
+              let i = r["input_cost_per_token"], let o = r["output_cost_per_token"] else { return nil }
+        return Rates(input: i, output: o, write: r["cache_creation_input_token_cost"] ?? i * 1.25,
+                     hourWrite: r["cache_creation_input_token_cost_above_1hr"] ?? i * 2, read: r["cache_read_input_token_cost"] ?? i * 0.1)
+    }
 
     struct FileProgress: Codable {
         var size = 0, offset = 0
@@ -397,8 +486,41 @@ enum ClaudeTokenUsage {
         var lastModel: String?
         var last: TokenDay?
         var models: ModelDays = [:]
+        /// Tokens of models with no price yet (day → model), priced and fixed once a price is added; and the last
+        /// message's share of them, so a later line of that message can take it back.
+        var pending: [String: [String: Pending]]?
+        var lastPending: Pending?
     }
+    /// Cache writes split by lifetime: a 1-hour write has its own price.
+    struct Pending: Codable {
+        var input = 0.0, output = 0.0, cacheRead = 0.0, write = 0.0, hour = 0.0
+        static func + (a: Pending, b: Pending) -> Pending {
+            Pending(input: a.input + b.input, output: a.output + b.output, cacheRead: a.cacheRead + b.cacheRead, write: a.write + b.write, hour: a.hour + b.hour)
+        }
+        static func - (a: Pending, b: Pending) -> Pending {
+            Pending(input: a.input - b.input, output: a.output - b.output, cacheRead: a.cacheRead - b.cacheRead, write: a.write - b.write, hour: a.hour - b.hour)
+        }
+        func usd(_ r: Rates) -> Double {
+            input * r.input + output * r.output + (write - hour) * r.write + hour * r.hourWrite + cacheRead * r.read
+        }
+    }
+    /// Like Codex's: a day's dollars are fixed at the price they were read at; a model priced later is filled in
+    /// from `pending`, with no rescan.
     struct Cache: Codable { var version = 1; var files: [String: FileProgress] = [:] }
+
+    private static func pricePending(_ p: inout FileProgress) {
+        guard var pending = p.pending else { return }
+        for (day, models) in pending {
+            for (model, t) in models {
+                guard let r = rates(model) else { continue }
+                p.models[day, default: [:]][model, default: TokenDay()].usd += t.usd(r)
+                if let last = p.lastPending, day == p.lastDay, model == p.lastModel { p.last?.usd = last.usd(r); p.lastPending = nil }
+                pending[day]?[model] = nil
+            }
+            if pending[day]?.isEmpty == true { pending[day] = nil }
+        }
+        p.pending = pending.isEmpty ? nil : pending
+    }
 
     static var root: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects", isDirectory: true) }
 
@@ -417,6 +539,7 @@ enum ClaudeTokenUsage {
                 cache.files[url.path] = progress
             }
         }
+        for key in cache.files.keys where cache.files[key]?.pending != nil { pricePending(&cache.files[key]!) }
         // Claude Code deletes sessions after 30 days; what they used stays here, so 用量's 全部 keeps those days.
         for progress in cache.files.values {
             for (day, models) in progress.models {
@@ -451,16 +574,27 @@ enum ClaudeTokenUsage {
             let write = n("cache_creation_input_tokens")
             let hour = ((usage["cache_creation"] as? [String: Any])?["ephemeral_1h_input_tokens"] as? NSNumber)?.doubleValue ?? 0
             var tokens = TokenDay(input: n("input_tokens"), output: n("output_tokens"), cacheRead: n("cache_read_input_tokens"), cacheWrite: write)
-            if let r = rates[model] {
-                tokens.usd = (tokens.input * r.0 + tokens.output * r.1 + (write - hour) * r.2 + hour * r.0 * 2 + tokens.cacheRead * r.3) / 1_000_000
-            }
+            let raw = Pending(input: tokens.input, output: tokens.output, cacheRead: tokens.cacheRead, write: write, hour: hour)
+            let r = rates(model)
+            if let r { tokens.usd = raw.usd(r) }
             let day = UsageStore.dayKey(when)
             let id = (message["id"] as? String) ?? (object["uuid"] as? String)
             // Same message as the line before: take back what that line added.
             if let id, id == p.lastID, let last = p.last, let lastDay = p.lastDay, let lastModel = p.lastModel {
                 p.models[lastDay, default: [:]][lastModel, default: TokenDay()] = (p.models[lastDay]?[lastModel] ?? TokenDay()) - last
+                if let lastPending = p.lastPending, let waiting = p.pending?[lastDay]?[lastModel] {
+                    p.pending?[lastDay]?[lastModel] = waiting - lastPending
+                }
             }
             p.models[day, default: [:]][model, default: TokenDay()] += tokens
+            if r == nil {
+                var waiting = p.pending ?? [:]
+                waiting[day, default: [:]][model] = (waiting[day]?[model] ?? Pending()) + raw
+                p.pending = waiting
+                p.lastPending = raw
+            } else {
+                p.lastPending = nil
+            }
             p.lastID = id; p.lastDay = day; p.lastModel = model; p.last = tokens
         }
     }
@@ -558,11 +692,22 @@ final class UsageStore {
         Disk.write(trails, "balance-trails.json")
     }
 
+    private var pricesFetch: Task<Void, Never>?
+    /// Both scans ask; one download serves them.
+    private func freshPrices() async {
+        if let pricesFetch { return await pricesFetch.value }
+        let fetch = Task { await Prices.refresh() }
+        pricesFetch = fetch
+        await fetch.value
+        pricesFetch = nil
+    }
+
     func refreshAccounts() async {
         guard !scanning else { return }
         scanning = true
         // Files with no thread record count for the account signed in to Codex now.
         let signedIn = CodexFiles.authData().flatMap(CodexLogin.init(data:))?.accountID
+        await freshPrices()
         let scan = await Task.detached(priority: .utility) { CodexTokenUsage.scan(signedIn: signedIn) }.value
         accountTokens = scan.cost
         codexModels = scan.models
@@ -572,6 +717,7 @@ final class UsageStore {
     func refreshClaudeCode() async {
         guard !scanningClaude else { return }
         scanningClaude = true
+        await freshPrices()
         claudeModels = await Task.detached(priority: .utility) { ClaudeTokenUsage.scan() }.value
         scanningClaude = false
     }
