@@ -38,13 +38,13 @@ struct UsagePage: View {
     private var lines: [Line] {
         var out: [(UUID, String, String, Bool, [String: Double])] = []
         for provider in claude.providers {
-            out.append((provider.id, provider.displayName, claude.quotas[provider.id] != nil ? "席位" : "中转", false,
+            out.append((provider.id, provider.displayName, claude.quotas[provider.id] != nil ? "订阅" : "中转", false,
                         usage.daily(relay: provider.id, ratio: provider.cnyPerUnit)))
         }
         for profile in codex.profiles {
             switch profile.kind {
             case .official:
-                out.append((profile.id, profile.displayName, "估算", true, usage.daily(account: profile.accountID)))
+                out.append((profile.id, profile.displayName, "订阅", true, usage.daily(account: profile.accountID)))
             case .relay:
                 out.append((profile.id, profile.displayName, "中转", true, usage.daily(relay: profile.id, ratio: profile.cnyPerUnit)))
             }
@@ -510,9 +510,6 @@ private struct TokenCard: View {
                     .font(.system(size: 12))
                 }
                 .padding(.top, 6)
-                Text("命中率 = 缓存读取 ÷（缓存读取 + 缓存写入 + 输入），越高越省钱。")
-                    .font(.system(size: 11)).foregroundStyle(.secondary).padding(.top, 10)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
