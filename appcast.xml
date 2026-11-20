@@ -3,6 +3,15 @@
   <channel>
     <title>Swapdeck</title>
     <item>
+      <title>1.2.5</title>
+      <pubDate>Fri, 20 Nov 2026 21:33:48 +0800</pubDate>
+      <sparkle:version>9</sparkle:version>
+      <sparkle:shortVersionString>1.2.5</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<p>新增「用量」页：按线路看今天、7 天、30 天和全部的花费，还有每天的柱状图、模型和 Token 明细。<br>菜单栏显示当前线路的剩余：订阅用两行方块（上 5 小时、下本周），余额直接显示金额；额度快用完时变红。<br>卖席位的 Claude 中转也显示 5 小时和每周额度、重置倒计时和剩余美元。Codex 额度用完时显示 Credits。<br>模型价格改用 LiteLLM 的价格表，每天自动更新。</p>]]></description>
+      <enclosure url="https://github.com/lazymicezhu/Swapdeck/releases/download/v1.2.5/Swapdeck-1.2.5.zip" type="application/octet-stream" sparkle:edSignature="DPZcExhyKBs5GHo1/EU9xaF0h22MoOL+gQBZXV7FDEyNZuhW/sTSMJ9egSlnFCOhT4Jve0L58VcG/Wh4/oUKAw==" length="3890308" />
+    </item>
+    <item>
       <title>1.2.4</title>
       <pubDate>Wed, 18 Nov 2026 16:42:23 +0800</pubDate>
       <sparkle:version>8</sparkle:version>
