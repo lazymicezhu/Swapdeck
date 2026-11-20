@@ -24,6 +24,7 @@ struct ClaudeProvider: Codable, Hashable, Identifiable {
 enum ClaudeConfig {
     enum Failure: Error { case unreadable, writeFailed }
 
+    static let defaultContextTokens = 200_000
     static var settings: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/settings.json") }
     static var desktopLibrary: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -42,7 +43,7 @@ enum ClaudeConfig {
         return (readJSON(settings)?["env"] as? [String: Any])?["ANTHROPIC_BASE_URL"] as? String
     }
 
-    /// Points the command line at the relay (only the two env keys change; the first original is backed up).
+    /// Points the command line at the relay and fills in a 200K context cap if unset (the first original is backed up).
     static func applyCLI(baseURL: String, token: String) throws {
         let fm = FileManager.default
         var object: [String: Any] = [:]
@@ -60,6 +61,10 @@ enum ClaudeConfig {
         var env = object["env"] as? [String: Any] ?? [:]
         env["ANTHROPIC_BASE_URL"] = baseURL
         env["ANTHROPIC_AUTH_TOKEN"] = token
+        // Cap the context at 200K (relays bill per token, and many don't serve 1M); keep a value the user set.
+        for key in ["CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_AUTO_COMPACT_WINDOW"] where env[key] == nil {
+            env[key] = String(defaultContextTokens)
+        }
         object["env"] = env
         try writeJSON(object, to: settings, mode: mode & 0o777)
     }
@@ -129,8 +134,9 @@ final class ClaudeStore {
     private(set) var message: String?
     /// Bumped when the config files may have changed, so `activeID` is read again.
     private var configVersion = 0
-    var restartClaude: Bool { didSet { defaults.set(restartClaude, forKey: "claude.restart") } }
-    var syncCLI: Bool { didSet { defaults.set(syncCLI, forKey: "claude.syncCLI") } }
+    /// Always: a switch restarts Claude so it takes effect, and the command line follows the desktop app.
+    let restartClaude = true
+    let syncCLI = true
 
     private let defaults = UserDefaults.standard
     private static let file = "claude-providers.json"
@@ -138,8 +144,6 @@ final class ClaudeStore {
     private var loop: Task<Void, Never>?
 
     private init() {
-        restartClaude = defaults.object(forKey: "claude.restart") as? Bool ?? true
-        syncCLI = defaults.object(forKey: "claude.syncCLI") as? Bool ?? true
         providers = Disk.read(Saved.self, Self.file)?.providers ?? []
     }
 
@@ -251,6 +255,7 @@ final class ClaudeStore {
         refreshing = true
         configVersion += 1
         for provider in providers { await refresh(provider) }
+        await UsageStore.shared.refreshClaudeCode()
         refreshing = false
         refreshedAt = Date()
     }

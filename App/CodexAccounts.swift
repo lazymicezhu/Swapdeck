@@ -386,7 +386,8 @@ final class CodexStore {
     private(set) var message: String?
     /// Waiting for the user to sign in to another account in Codex.
     private(set) var pendingLogin: Bool { didSet { defaults.set(pendingLogin, forKey: "codex.pendingLogin") } }
-    var restartCodex: Bool { didSet { defaults.set(restartCodex, forKey: "codex.restart") } }
+    /// Always: a switch restarts Codex so it takes effect.
+    let restartCodex = true
 
     static let refreshEvery: TimeInterval = 2 * 60
     private let defaults = UserDefaults.standard
@@ -400,7 +401,6 @@ final class CodexStore {
 
     private init() {
         pendingLogin = defaults.bool(forKey: "codex.pendingLogin")
-        restartCodex = defaults.object(forKey: "codex.restart") as? Bool ?? true
         profiles = Disk.read(Saved.self, Self.file)?.profiles ?? []
         quotas = Disk.read([UUID: CodexQuota].self, Self.quotaFile) ?? [:]
     }

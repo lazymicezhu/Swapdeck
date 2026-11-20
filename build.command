@@ -20,12 +20,29 @@ if [[ ! -d Vendor/Sparkle.framework ]]; then
   rm Vendor/sparkle.tar.xz
 fi
 
+# zstd's decoder, for Codex's compressed rollouts (macOS has none of its own), pinned and checked, kept out of git.
+ZSTD_VERSION=1.5.7
+ZSTD_SHA=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
+if [[ ! -f Vendor/zstd/zstd.h ]]; then
+  mkdir -p Vendor/zstd
+  curl -sL "https://github.com/facebook/zstd/releases/download/v$ZSTD_VERSION/zstd-$ZSTD_VERSION.tar.gz" -o Vendor/zstd.tar.gz
+  echo "$ZSTD_SHA  Vendor/zstd.tar.gz" | shasum -a 256 -c - >/dev/null
+  tar -xzf Vendor/zstd.tar.gz -C Vendor/zstd --strip-components 2 "zstd-$ZSTD_VERSION/lib/common" "zstd-$ZSTD_VERSION/lib/decompress" \
+    "zstd-$ZSTD_VERSION/lib/zstd.h" "zstd-$ZSTD_VERSION/lib/zstd_errors.h"
+  rm Vendor/zstd.tar.gz
+fi
+
 rm -rf "$OUT"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 # Universal binary (Apple silicon + Intel), macOS 15+.
 for ARCH in arm64 x86_64; do
+  ZOBJ="$OUT/zstd-$ARCH"; mkdir -p "$ZOBJ"
+  for SRC in Vendor/zstd/common/*.c Vendor/zstd/decompress/*.c; do
+    clang -O2 -c -target "$ARCH-apple-macos15.0" -DZSTD_DISABLE_ASM -DZSTD_LEGACY_SUPPORT=0 -IVendor/zstd "$SRC" -o "$ZOBJ/${${SRC:t}%.c}.o"
+  done
   swiftc -O -disable-sandbox -module-cache-path "$OUT/ModuleCache-$ARCH" -parse-as-library -target "$ARCH-apple-macos15.0" -swift-version 5 \
     -F Vendor -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
-    -module-name Swapdeck App/*.swift -o "$OUT/$NAME-$ARCH"
+    -import-objc-header App/Bridging.h -Xcc -IVendor/zstd \
+    -module-name Swapdeck App/*.swift "$ZOBJ"/*.o -o "$OUT/$NAME-$ARCH"
 done
 lipo -create "$OUT/$NAME-arm64" "$OUT/$NAME-x86_64" -output "$APP/Contents/MacOS/$NAME"
 cp App/Info.plist "$APP/Contents/Info.plist"
@@ -41,7 +58,7 @@ for SIZE in 16 32 128 256 512; do
   sips -z $((SIZE*2)) $((SIZE*2)) App/Resources/icon.png --out "$ICONSET/icon_${SIZE}x${SIZE}@2x.png" >/dev/null
 done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
-rm -rf "$ICONSET" "$OUT"/ModuleCache-* "$OUT/$NAME-arm64" "$OUT/$NAME-x86_64"
+rm -rf "$ICONSET" "$OUT"/ModuleCache-* "$OUT"/zstd-* "$OUT/$NAME-arm64" "$OUT/$NAME-x86_64"
 
 xattr -cr "$APP"  # iCloud adds Finder info, which codesign refuses
 # Ad-hoc signature, inside out: Sparkle's helpers, the framework, then the app.

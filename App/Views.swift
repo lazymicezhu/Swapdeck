@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 enum SwitcherTab: String, CaseIterable, Identifiable {
-    case claude = "Claude", codex = "Codex"
+    case claude = "Claude", codex = "Codex", usage = "用量"
     var id: Self { self }
 }
 
@@ -17,18 +17,19 @@ struct SwitcherView: View {
     private var codex = CodexStore.shared
 
     private var isCodex: Bool { tab == SwitcherTab.codex.rawValue }
-    private var refreshing: Bool { isCodex ? codex.refreshing : claude.refreshing }
-    private var refreshedAt: Date? { isCodex ? codex.refreshedAt : claude.refreshedAt }
+    private var isUsage: Bool { tab == SwitcherTab.usage.rawValue }
+    private var refreshing: Bool { isUsage ? codex.refreshing || claude.refreshing : isCodex ? codex.refreshing : claude.refreshing }
+    private var refreshedAt: Date? { isUsage ? claude.refreshedAt : isCodex ? codex.refreshedAt : claude.refreshedAt }
 
     var body: some View {
         VStack(spacing: 0) {
             titleBar
             Group {
-                if isCodex { CodexCase() } else { ClaudeCase() }
+                if isUsage { UsagePage() } else if isCodex { CodexCase() } else { ClaudeCase() }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .overlay(alignment: .bottom) { Toast(message: isCodex ? codex.message : claude.message) }
+        .overlay(alignment: .bottom) { Toast(message: isUsage ? nil : isCodex ? codex.message : claude.message) }
         .frame(minWidth: 320, minHeight: 440)
         .background(Palette.window)
         .ignoresSafeArea(.container, edges: .top)
@@ -58,7 +59,10 @@ struct SwitcherView: View {
             Spacer(minLength: 0)
             HStack(spacing: 2) {
                 ToolButton(symbol: "arrow.clockwise", help: refreshedAt.map { "刷新（上次 \(Fmt.time($0))）" } ?? "刷新", busy: refreshing) {
-                    Task { if isCodex { await codex.refreshAll() } else { await claude.refreshAll() } }
+                    Task {
+                        if isUsage { async let a: Void = claude.refreshAll(); async let b: Void = codex.refreshAll(); _ = await (a, b) }
+                        else if isCodex { await codex.refreshAll() } else { await claude.refreshAll() }
+                    }
                 }
                 ToolButton(symbol: "gearshape", help: "设置") { showSettings = true }
             }
@@ -166,7 +170,7 @@ private struct FrontCard: View {
                 let both = five == nil && week == nil
                 if both || five != nil { Meter(label: "5 小时", window: five).padding(.top, 20) }
                 if both || week != nil { Meter(label: "7 天", window: week).padding(.top, five == nil && !both ? 20 : 14) }
-                if card.usage == nil, let credits {
+                if let credits {
                     HStack {
                         Text("Credits").foregroundStyle(Palette.inkMuted)
                         Spacer()
@@ -226,7 +230,8 @@ extension CodexWindow {
     var exhausted: Bool { remaining < 0.5 && resetAt > Date() }
 }
 
-/// One rate-limit window as 20 cells; neutral until it runs low. Used up, it becomes a countdown instead.
+/// One rate-limit window as 20 cells; neutral until it runs low. Used up, the cells stay empty and the countdown
+/// next to the label says when it comes back.
 private struct Meter: View {
     let label: String
     let window: CodexWindow?
@@ -234,13 +239,17 @@ private struct Meter: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(label).foregroundStyle(Palette.inkMuted)
-                if let window, !window.exhausted, window.resetAt > Date() {
+                // As wide as the widest label, so both rows' countdowns start at the same place.
+                ZStack(alignment: .leading) {
+                    Text("5 小时").hidden()
+                    Text(label).foregroundStyle(Palette.inkMuted)
+                }
+                if let window, window.resetAt > Date() {
                     // Refreshes itself so the countdown never goes stale while the window is open.
                     TimelineView(.periodic(from: .now, by: 30)) { context in
-                        Text("\(ResetText.countdown(to: window.resetAt, now: context.date))后重置")
+                        Text("\(ResetText.countdown(to: window.resetAt, now: context.date))\(window.exhausted ? "后恢复" : "后重置")")
                             .font(.system(size: 11)).monospacedDigit()
-                            .foregroundStyle(Palette.inkMuted)
+                            .foregroundStyle(window.exhausted ? Palette.alarm : Palette.inkMuted)
                             .lineLimit(1)
                     }
                 }
@@ -256,28 +265,14 @@ private struct Meter: View {
                     .foregroundStyle(tint ?? Palette.inkText)
             }
             .font(.system(size: 11.5))
-            if let window, window.exhausted {
-                // Refreshes itself so the countdown never goes stale while the window is open.
-                TimelineView(.periodic(from: .now, by: 30)) { context in
-                    HStack(spacing: 8) {
-                        Text("已用完，\(ResetText.countdown(to: window.resetAt, now: context.date))后恢复")
-                            .font(.system(size: 11.5)).monospacedDigit()
-                            .fixedSize()
-                        Rectangle().fill(Palette.alarm.opacity(0.4)).frame(minWidth: 0, maxWidth: .infinity).frame(height: 1)
-                    }
-                    .foregroundStyle(Palette.alarm)
-                    .frame(height: 14)
+            HStack(spacing: 3) {
+                ForEach(0..<20, id: \.self) { index in
+                    RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+                        .fill(index < lit ? (tint ?? Palette.inkText) : Palette.inkText.opacity(0.1))
+                        .frame(height: 14)
                 }
-            } else {
-                HStack(spacing: 3) {
-                    ForEach(0..<20, id: \.self) { index in
-                        RoundedRectangle(cornerRadius: 2.5, style: .continuous)
-                            .fill(index < lit ? (tint ?? Palette.inkText) : Palette.inkText.opacity(0.1))
-                            .frame(height: 14)
-                    }
-                }
-                .help(window.map { ResetText.detail($0.resetAt) } ?? "")
             }
+            .help(window.map { ResetText.detail($0.resetAt) } ?? "")
         }
     }
 
@@ -609,6 +604,7 @@ private struct ClaudeCase: View {
     @Bindable var store = ClaudeStore.shared
     @State private var editing: ClaudeProvider?
     @State private var deleting: ClaudeProvider?
+    @State private var adding = false
 
     private var cards: [CardModel] {
         store.providers.map { provider in
@@ -635,7 +631,20 @@ private struct ClaudeCase: View {
                 }
             }
         } footer: {
-            Button { editing = ClaudeProvider() } label: { AddSlot { Text("＋ 添加中转") } }.buttonStyle(.plain)
+            // Same add card as Codex's.
+            Group {
+                if adding {
+                    AddChoices(close: { adding = false }, choices: [
+                        ("中转", "填地址和 Key", true, { editing = ClaudeProvider() }),
+                    ])
+                    .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .bottom)))
+                } else {
+                    Button { adding = true } label: { AddSlot { Text("＋ 添加中转") } }
+                        .buttonStyle(.plain)
+                        .transition(.opacity)
+                }
+            }
+            .animation(.snappy(duration: 0.22), value: adding)
         }
         .sheet(item: $editing) { ClaudeProviderEditor(provider: $0) }
         .confirmationDialog("删除「\(deleting?.displayName ?? "")」？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
@@ -766,7 +775,6 @@ private struct CodexCase: View {
 
 private struct SettingsSheet: View {
     @Bindable var prefs = Prefs.shared
-    @Bindable var claude = ClaudeStore.shared
     @Bindable var codex = CodexStore.shared
     @State private var autoCheck = Updates.shared.updater.automaticallyChecksForUpdates
     @Environment(\.dismiss) private var dismiss
@@ -779,22 +787,6 @@ private struct SettingsSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             Form {
-                Section {
-                    Toggle("窗口始终置顶", isOn: $prefs.onTop)
-                    Toggle("登录时打开", isOn: $prefs.launchAtLogin)
-                } footer: {
-                    if codex.relays.contains(where: { !$0.connectsDirectly }) {
-                        Text("Codex 使用第三方中转时经本应用转发，保持它运行。").font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                Section("Claude") {
-                    Toggle("切换后重启 Claude", isOn: $claude.restartClaude)
-                    Toggle("同时用于命令行", isOn: $claude.syncCLI)
-                        .help("写入 ~/.claude/settings.json，命令行里新开的会话也走这条线路。")
-                }
-                Section("Codex") {
-                    Toggle("切换后重启 Codex", isOn: $codex.restartCodex)
-                }
                 Section("更新") {
                     Toggle("自动检查更新", isOn: $autoCheck)
                         .onChange(of: autoCheck) { _, on in Updates.shared.updater.automaticallyChecksForUpdates = on }
@@ -805,19 +797,28 @@ private struct SettingsSheet: View {
                         }
                     }
                 }
+                Section {
+                    Toggle("窗口始终置顶", isOn: $prefs.onTop)
+                    Toggle("登录时打开", isOn: $prefs.launchAtLogin)
+                } footer: {
+                    if codex.relays.contains(where: { !$0.connectsDirectly }) {
+                        Text("Codex 使用第三方中转时经本应用转发，保持它运行。").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
             }
             .formStyle(.grouped)
             HStack { Spacer(); Button("完成") { dismiss() }.keyboardShortcut(.defaultAction) }
                 .padding(.horizontal, 20).padding(.bottom, 16)
         }
-        .frame(width: 380, height: 460)
+        .frame(width: 380, height: 300)
     }
 }
 
 // MARK: Editors
 
-/// Shared layout for the two relay editors.
+/// Shared layout for the two relay editors: the same ink card as the Lazymice sign-in.
 private struct RelayForm: View {
+    let kind: String
     let title: String
     @Binding var name: String
     @Binding var baseURL: String
@@ -833,40 +834,76 @@ private struct RelayForm: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(spacing: 0) {
-            Form {
-                Section {
-                    TextField("名称", text: $name, prompt: Text("可选"))
-                    TextField("地址", text: $baseURL, prompt: Text("https://example.com"))
-                    SecureField("Key", text: $key, prompt: Text(keySaved ? "已保存，输入新的以替换" : "粘贴 API Key"))
-                    SecureField("访问令牌", text: $accessToken, prompt: Text(accessSaved ? "已保存，输入新的以替换" : "可选"))
-                        .help("new-api 中转（如 corecode）的系统访问令牌，在网站「个人设置 → 安全设置」生成。填了能显示近 30 天每天的花费；不填就从切号开始记录的那天起，按余额变化估算。")
-                    LabeledContent("充值比例") {
-                        HStack(spacing: 4) {
-                            Text("¥").foregroundStyle(.secondary)
-                            TextField("", value: $ratio, format: .number.precision(.fractionLength(0...4)))
-                                .labelsHidden().frame(width: 56).multilineTextAlignment(.trailing)
-                            Text("换 1 额度").foregroundStyle(.secondary)
-                        }
-                    }
-                    .help("充多少人民币得到 1 个额度，用来把余额换算成人民币。")
-                } header: { Text(title) } footer: {
-                    if !baseURL.isEmpty && !valid {
-                        Text("地址需要以 https:// 开头。").font(.caption).foregroundStyle(.red)
-                    } else if failed {
-                        Text("没能保存，检查一下本机文件权限。").font(.caption).foregroundStyle(.red)
-                    }
+        VStack(alignment: .leading, spacing: 0) {
+            Text(kind).font(.system(size: 11)).foregroundStyle(Palette.inkMuted)
+            Text(title).font(.system(size: 16, weight: .semibold)).padding(.top, 3)
+            field("名称") { TextField("", text: $name, prompt: hint("可选")) }
+            field("地址") { TextField("", text: $baseURL, prompt: hint("https://example.com")) }
+            field("Key") { SecureField("", text: $key, prompt: hint(keySaved ? "已保存，输入新的以替换" : "粘贴 API Key")) }
+            field("访问令牌") { SecureField("", text: $accessToken, prompt: hint(accessSaved ? "已保存，输入新的以替换" : "可选")) }
+                .help("new-api 中转（如 corecode）的系统访问令牌，在网站「个人设置 → 安全设置」生成。填了能显示近 30 天每天的花费；不填就从切号开始记录的那天起，按余额变化估算。")
+            field("充值比例") {
+                HStack(spacing: 6) {
+                    Text("¥").foregroundStyle(Palette.inkMuted)
+                    TextField("", value: $ratio, format: .number.precision(.fractionLength(0...4)))
+                        .frame(width: 48)
+                    Text("换 1 额度").foregroundStyle(Palette.inkMuted)
+                    Spacer(minLength: 0)
                 }
             }
-            .formStyle(.grouped)
-            HStack {
-                Spacer()
-                Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("保存", action: save).keyboardShortcut(.defaultAction).disabled(!canSave)
+            .help("充多少人民币得到 1 个额度，用来把余额换算成人民币。")
+            if !baseURL.isEmpty && !valid {
+                note("地址需要以 https:// 开头。")
+            } else if failed {
+                note("没能保存，检查一下本机文件权限。")
             }
-            .padding(.horizontal, 20).padding(.bottom, 16)
+            HStack(spacing: 14) {
+                Spacer()
+                Button("取消") { dismiss() }
+                    .buttonStyle(.plain).font(.system(size: 12.5)).foregroundStyle(Palette.inkMuted)
+                    .keyboardShortcut(.cancelAction)
+                Button(action: save) {
+                    Text("保存")
+                        .font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Palette.ink)
+                        .padding(.horizontal, 18).padding(.vertical, 7)
+                        .background(Capsule().fill(Palette.inkText))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canSave)
+                .opacity(canSave ? 1 : 0.4)
+            }
+            .padding(.top, 22)
         }
-        .frame(width: 400, height: 350)
+        .foregroundStyle(Palette.inkText)
+        .tint(Palette.inkText)
+        .padding(22)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Palette.ink)
+        .frame(width: 360)
+        .presentationBackground(Palette.ink)
+        .animation(.snappy(duration: 0.22), value: valid)
+        .animation(.snappy(duration: 0.22), value: failed)
+    }
+
+    private func hint(_ text: String) -> Text { Text(text).foregroundStyle(Palette.inkMuted.opacity(0.7)) }
+
+    private func note(_ text: String) -> some View {
+        Text(text).font(.system(size: 11.5)).foregroundStyle(Palette.alarm).padding(.top, 12)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func field<Input: View>(_ label: String, @ViewBuilder input: () -> Input) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(label).font(.system(size: 11)).foregroundStyle(Palette.inkMuted)
+            input()
+                .textFieldStyle(.plain).labelsHidden()
+                .font(.system(size: 13.5))
+                .frame(minHeight: 20)
+            Rectangle().fill(Palette.inkText.opacity(0.18)).frame(height: 1)
+        }
+        .padding(.top, 14)
     }
 }
 
@@ -882,7 +919,7 @@ struct ClaudeProviderEditor: View {
     private var keySaved: Bool { !isNew && store.hasKey(provider) }
 
     var body: some View {
-        RelayForm(title: isNew ? "添加 Claude 中转" : "编辑 Claude 中转",
+        RelayForm(kind: "Claude 中转", title: isNew ? "添加" : "编辑",
                   name: $provider.name, baseURL: $provider.baseURL, key: $key, accessToken: $accessToken, ratio: $provider.cnyPerUnit,
                   keySaved: keySaved, accessSaved: !isNew && Secrets.get(provider.accessAccount) != nil, valid: provider.root != nil,
                   canSave: provider.root != nil && provider.cnyPerUnit > 0 && (keySaved || !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
@@ -904,7 +941,7 @@ struct CodexRelayEditor: View {
     private var keySaved: Bool { !isNew && store.storedKey(profile) }
 
     var body: some View {
-        RelayForm(title: isNew ? "添加 Codex 中转" : "编辑 Codex 中转",
+        RelayForm(kind: "Codex 中转", title: isNew ? "添加" : "编辑",
                   name: $profile.name, baseURL: $profile.baseURL, key: $key, accessToken: $accessToken, ratio: $profile.cnyPerUnit,
                   keySaved: keySaved, accessSaved: !isNew && Secrets.get(profile.accessAccount) != nil, valid: profile.root != nil,
                   canSave: profile.root != nil && profile.cnyPerUnit > 0 && (keySaved || !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
