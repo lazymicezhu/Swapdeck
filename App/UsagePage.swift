@@ -81,9 +81,8 @@ struct UsagePage: View {
         let lines = scoped
         ScrollView {
             VStack(spacing: 12) {
-                // As tall in every scope and range (rows for every line that spent in 30 days), so the switches under
-                // it stay put when one is clicked.
-                SpendCard(lines: lines, range: range, reservedRows: self.lines.filter { $0.all.values.contains { $0 > 0 } }.count)
+                // Every card keeps one height whatever the data, scope or range, so nothing on the page moves.
+                SpendCard(lines: lines, range: range)
                 // Under the card, each half of the row, every segment the same width: they never shift as the labels change.
                 HStack(spacing: 10) {
                     Segments(items: Scope.allCases, selection: $scope) { $0.rawValue }
@@ -227,8 +226,10 @@ private struct Ring: View {
 private struct SpendCard: View {
     let lines: [UsagePage.Line]
     let range: UsagePage.Range
-    let reservedRows: Int
     @State private var hovered: Int?
+
+    /// The legend always has room for this many rows; more lines fold their tail into one 其他 row.
+    static let legendRows = 5
 
     struct Bucket {
         /// For the title when pointed at.
@@ -303,8 +304,15 @@ private struct SpendCard: View {
         let total = shown.reduce(0) { $0 + $1.1 }
         // The ring and legend keep one height: if the card grew or shrank under the pointer, the bars would move away
         // from it and back, over and over; and the switches under the card would move away from a click.
-        let rows = max(reservedRows, 1)
-        let legendHeight = max(92, CGFloat(rows) * 16 + CGFloat(rows - 1) * 7)
+        let rows = Self.legendRows
+        let legendHeight = CGFloat(rows) * 16 + CGFloat(rows - 1) * 7
+        let legend: [(name: String, note: String, color: Color, value: Double, id: String)] = {
+            let all = shown.map { (name: $0.0.name, note: $0.0.note, color: $0.0.color, value: $0.1, id: $0.0.id.uuidString) }
+            guard all.count > rows else { return all }
+            let rest = all.dropFirst(rows - 1)
+            return Array(all.prefix(rows - 1)) + [(name: "其他 \(rest.count) 个", note: "", color: Palette.inkMuted,
+                                                    value: rest.reduce(0) { $0 + $1.value }, id: "rest")]
+        }()
         VStack(alignment: .leading, spacing: 0) {
             Text(picked.map { "\(buckets[$0].label) 花费" } ?? title)
                 .font(.system(size: 11)).foregroundStyle(Palette.inkMuted)
@@ -314,7 +322,7 @@ private struct SpendCard: View {
                     .font(.system(size: 30, weight: .semibold)).kerning(-0.6).monospacedDigit()
             }
             .padding(.top, 2)
-            Text(subline(shown: shown))
+            Text(subline(shown: shown).isEmpty ? " " : subline(shown: shown))
                 .font(.system(size: 11.5)).monospacedDigit().foregroundStyle(Palette.inkMuted).padding(.top, 2)
             HStack(spacing: 16) {
                 Ring(parts: shown.map { ($0.1, $0.0.color) }).frame(width: 92, height: 92)
@@ -323,19 +331,20 @@ private struct SpendCard: View {
                         Text(picked == nil ? "这段时间没有花费" : range != .all ? "这天没有花费" : monthly ? "这个月没有花费" : "这周没有花费")
                             .font(.system(size: 12)).foregroundStyle(Palette.inkMuted)
                     }
-                    ForEach(shown, id: \.0.id) { line, value in
+                    ForEach(legend, id: \.id) { row in
                         HStack(spacing: 7) {
-                            RoundedRectangle(cornerRadius: 2).fill(line.color).frame(width: 7, height: 7)
-                            Text(line.name).lineLimit(1).truncationMode(.middle)
-                            Text(line.note).font(.system(size: 10.5)).foregroundStyle(Palette.inkMuted).fixedSize()
+                            RoundedRectangle(cornerRadius: 2).fill(row.color).frame(width: 7, height: 7)
+                            Text(row.name).lineLimit(1).truncationMode(.middle)
+                            Text(row.note).font(.system(size: 10.5)).foregroundStyle(Palette.inkMuted).fixedSize()
                             Spacer(minLength: 4)
-                            Text(Fmt.yuan(value, 2)).fontWeight(.semibold).monospacedDigit().fixedSize()
+                            Text(Fmt.yuan(row.value, 2)).fontWeight(.semibold).monospacedDigit().fixedSize()
                         }
                         .frame(height: 16)
                     }
                 }
                 .font(.system(size: 12))
                 .frame(maxWidth: .infinity, minHeight: legendHeight, maxHeight: legendHeight, alignment: .leading)
+                .clipped()
             }
             .padding(.top, 14)
             bars(buckets, picked: picked)
@@ -431,10 +440,12 @@ private struct PlainCard<Content: View>: View {
     }
 }
 
-/// Top three models by amount, the rest folded into one row.
+/// Top three models by amount, the rest folded into one row. Always four rows tall: missing rows keep their space
+/// and an empty range says so in the middle, so the card never changes height.
 private struct ModelCard: View {
     let rows: [(String, Double)]
     let range: String
+    static let slots = 4
 
     static func percent(_ share: Double) -> String {
         share > 0 && share < 0.005 ? "<1%" : "\(Int((share * 100).rounded()))%"
@@ -442,30 +453,39 @@ private struct ModelCard: View {
 
     var body: some View {
         let total = max(rows.reduce(0) { $0 + $1.1 }, 0.000001)
-        let shown: [(String, Double)] = rows.count > 4 ? Array(rows.prefix(3)) + [("其他 \(rows.count - 3) 个", rows.dropFirst(3).reduce(0) { $0 + $1.1 })] : rows
+        let shown: [(String, Double)] = rows.count > Self.slots
+            ? Array(rows.prefix(Self.slots - 1)) + [("其他 \(rows.count - Self.slots + 1) 个", rows.dropFirst(Self.slots - 1).reduce(0) { $0 + $1.1 })]
+            : rows
         PlainCard(title: "模型", detail: range) {
-            if shown.isEmpty {
-                Text("没有记录").font(.system(size: 12)).foregroundStyle(.secondary).padding(.vertical, 8)
-            }
-            ForEach(Array(shown.enumerated()), id: \.offset) { index, row in
-                if index > 0 { Divider().opacity(0.6) }
-                VStack(spacing: 6) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(row.0).font(.system(size: 12.5)).lineLimit(1)
-                        Spacer(minLength: 6)
-                        Text(Fmt.yuan(row.1, 2)).font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
-                        Text(Self.percent(row.1 / total)).font(.system(size: 12.5, weight: .semibold)).monospacedDigit()
-                            .frame(minWidth: 30, alignment: .trailing)
-                    }
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Color.primary.opacity(0.07))
-                            Capsule().fill(Color.primary.opacity(0.8)).frame(width: geo.size.width * row.1 / total)
+            VStack(spacing: 0) {
+                ForEach(0..<Self.slots, id: \.self) { index in
+                    let row = index < shown.count ? shown[index] : ("—", 0)
+                    let present = index < shown.count
+                    if index > 0 { Divider().opacity(present ? 0.6 : 0) }
+                    VStack(spacing: 6) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(row.0).font(.system(size: 12.5)).lineLimit(1)
+                            Spacer(minLength: 6)
+                            Text(Fmt.yuan(row.1, 2)).font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
+                            Text(Self.percent(row.1 / total)).font(.system(size: 12.5, weight: .semibold)).monospacedDigit()
+                                .frame(minWidth: 30, alignment: .trailing)
                         }
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Color.primary.opacity(0.07))
+                                Capsule().fill(Color.primary.opacity(0.8)).frame(width: geo.size.width * row.1 / total)
+                            }
+                        }
+                        .frame(height: 4)
                     }
-                    .frame(height: 4)
+                    .padding(.vertical, 7)
+                    .opacity(present ? 1 : 0)
                 }
-                .padding(.vertical, 7)
+            }
+            .overlay {
+                if shown.isEmpty {
+                    Text("没有记录").font(.system(size: 12)).foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -484,33 +504,30 @@ private struct TokenCard: View {
         let all = kinds.reduce(0) { $0 + $1.1 }
         let prompt = tokens.cacheRead + tokens.cacheWrite + tokens.input
         PlainCard(title: "Token", detail: all > 0 ? "\(range) · \(TokenFmt.count(all))" : range) {
-            if all == 0 {
-                Text("没有记录").font(.system(size: 12)).foregroundStyle(.secondary).padding(.vertical, 8)
-            } else {
-                HStack(spacing: 16) {
-                    ZStack {
-                        Ring(parts: kinds.map { ($0.1, $0.2) }, width: 10)
-                        VStack(spacing: 1) {
-                            Text(prompt > 0 ? "\(Int((tokens.cacheRead / prompt * 100).rounded()))%" : "—")
-                                .font(.system(size: 18, weight: .semibold)).monospacedDigit()
-                            Text("缓存命中").font(.system(size: 10)).foregroundStyle(.secondary)
-                        }
+            // With nothing on record the ring stays, empty, so the card keeps its height.
+            HStack(spacing: 16) {
+                ZStack {
+                    Ring(parts: kinds.map { ($0.1, $0.2) }, width: 10)
+                    VStack(spacing: 1) {
+                        Text(prompt > 0 && all > 0 ? "\(Int((tokens.cacheRead / prompt * 100).rounded()))%" : "—")
+                            .font(.system(size: 18, weight: .semibold)).monospacedDigit()
+                        Text("缓存命中").font(.system(size: 10)).foregroundStyle(.secondary)
                     }
-                    .frame(width: 92, height: 92)
-                    VStack(alignment: .leading, spacing: 7) {
-                        ForEach(kinds, id: \.0) { kind in
-                            HStack(spacing: 7) {
-                                RoundedRectangle(cornerRadius: 2).fill(kind.2).frame(width: 7, height: 7)
-                                Text(kind.0)
-                                Spacer(minLength: 4)
-                                Text(TokenFmt.count(kind.1)).fontWeight(.semibold).monospacedDigit()
-                            }
-                        }
-                    }
-                    .font(.system(size: 12))
                 }
-                .padding(.top, 6)
+                .frame(width: 92, height: 92)
+                VStack(alignment: .leading, spacing: 7) {
+                    ForEach(kinds, id: \.0) { kind in
+                        HStack(spacing: 7) {
+                            RoundedRectangle(cornerRadius: 2).fill(kind.2).frame(width: 7, height: 7)
+                            Text(kind.0)
+                            Spacer(minLength: 4)
+                            Text(TokenFmt.count(kind.1)).fontWeight(.semibold).monospacedDigit()
+                        }
+                    }
+                }
+                .font(.system(size: 12))
             }
+            .padding(.top, 6)
         }
     }
 }

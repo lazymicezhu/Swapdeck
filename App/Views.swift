@@ -30,7 +30,7 @@ struct SwitcherView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .overlay(alignment: .bottom) { Toast(message: isUsage ? nil : isCodex ? codex.message : claude.message) }
-        .frame(width: WindowManager.width).frame(minHeight: 440)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Palette.window)
         .ignoresSafeArea(.container, edges: .top)
         .sheet(isPresented: $showSettings) { SettingsSheet() }

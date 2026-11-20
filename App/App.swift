@@ -86,19 +86,20 @@ final class Prefs {
 @MainActor
 final class WindowManager {
     static let shared = WindowManager()
-    static let width: CGFloat = 385
+    /// The window has one size; neither side can be dragged.
+    static let size = NSSize(width: 385, height: 650)
     private var window: NSWindow?
 
     func showMain() {
         if window == nil {
-            let width = WindowManager.width
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 600),
-                                  styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            let size = WindowManager.size
+            let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
+                                  styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
                                   backing: .buffered, defer: false)
             window.contentView = NSHostingView(rootView: SwitcherView())
-            // Fixed width; only the height can be dragged.
-            window.contentMinSize = NSSize(width: width, height: 420)
-            window.contentMaxSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+            // The whole frame, title bar included (the content runs under it), is this size.
+            window.minSize = size
+            window.maxSize = size
             window.title = "切号"
             // The view draws its own title row (tab switch and tools); the system title stays for Mission Control.
             window.titlebarAppearsTransparent = true
@@ -106,9 +107,9 @@ final class WindowManager {
             window.isMovableByWindowBackground = true
             window.isReleasedWhenClosed = false
             window.setFrameAutosaveName("QieHaoMain")
-            // A frame saved before the width was fixed may be wider or narrower: keep its height, reset the width.
-            if window.frame.width != width {
-                window.setFrame(NSRect(x: window.frame.minX, y: window.frame.minY, width: width, height: window.frame.height), display: false)
+            // A frame saved before the size was fixed may be any size: keep its top-left corner, reset the size.
+            if window.frame.size != size {
+                window.setFrame(NSRect(x: window.frame.minX, y: window.frame.maxY - size.height, width: size.width, height: size.height), display: false)
             }
             if window.frame.origin == .zero { window.center() }
             self.window = window
