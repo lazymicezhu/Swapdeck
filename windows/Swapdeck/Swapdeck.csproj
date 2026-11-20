@@ -2,7 +2,7 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType><TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings>
-    <AssemblyName>Swapdeck</AssemblyName><Version>0.1.12</Version>
+    <AssemblyName>Swapdeck</AssemblyName><Version>0.1.13</Version>
     <DebugType>none</DebugType><ApplicationIcon>Swapdeck.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>

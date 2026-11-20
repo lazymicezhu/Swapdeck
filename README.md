@@ -6,6 +6,10 @@ A small macOS app for switching the accounts and API relays used by the **Claude
 
 ## 安装
 
+Windows 10/11 x64 用户可直接[下载 Swapdeck 安装程序](https://github.com/lazymicezhu/Swapdeck/releases/download/windows-v0.1.13/Swapdeck-0.1.13-win-x64-Setup.exe)。安装后可在设置中检查更新。
+
+### macOS
+
 1. 在 [Releases](https://github.com/lazymicezhu/Swapdeck/releases/latest) 下载最新的 `Swapdeck-x.y.z.dmg`，打开后把「切号」拖进「应用程序」。
 2. 第一次打开时系统会提示无法验证：到「系统设置 → 隐私与安全性」，在「安全性」里点「仍要打开」。或者在终端运行：
    ```bash

@@ -6,9 +6,30 @@ namespace Swapdeck;
 
 public sealed class Updates
 {
-    const string Feed = "https://github.com/lazymicezhu/Swapdeck/releases/download/windows-stable/";
-    const string Index = "releases.win-x64.json";
-    readonly HttpClient http = new() { Timeout = TimeSpan.FromMinutes(10) };
+    const string Releases = "https://api.github.com/repos/lazymicezhu/Swapdeck/releases";
+    const string Download = "https://github.com/lazymicezhu/Swapdeck/releases/download/";
+    readonly HttpClient http = new() { Timeout = TimeSpan.FromMinutes(10), DefaultRequestHeaders = { { "User-Agent", "Swapdeck-Windows" } } };
+
+    async Task<Version?> Latest()
+    {
+        Version? latest = null;
+        for (int page = 1; ; page++)
+        {
+            var json = await http.GetStringAsync($"{Releases}?per_page=100&page={page}");
+            var releases = JsonNode.Parse(json)!.AsArray();
+            foreach (var release in releases)
+            {
+                string tag = release?["tag_name"]?.ToString() ?? "";
+                const string prefix = "windows-v";
+                if ((bool?)release?["draft"] == true || !tag.StartsWith(prefix,StringComparison.Ordinal) ||
+                    !Version.TryParse(tag[prefix.Length..], out var v) || tag != prefix + v ||
+                    release?["assets"] is not JsonArray assets || !assets.Any(a=>a?["name"]?.ToString()==FileName(v))) continue;
+                if (latest == null || v > latest) latest = v;
+            }
+            if (releases.Count < 100) return latest;
+        }
+    }
+    static string FileName(Version version) => $"Swapdeck-{version}-win-x64-Setup.exe";
     bool checking;
     public static void Verify(byte[] data, byte[] sig)
     {
@@ -22,25 +43,21 @@ public sealed class Updates
         var temp = Path.Combine(Path.GetTempPath(), "Swapdeck-update-" + Guid.NewGuid().ToString("N"));
         try
         {
-            using var response = await http.GetAsync(Feed + Index);
-            if (response.StatusCode == HttpStatusCode.NotFound) return "Windows 通道尚未发布更新";
-            response.EnsureSuccessStatusCode();
-            var manifest = await response.Content.ReadAsByteArrayAsync();
-            Verify(manifest, await http.GetByteArrayAsync(Feed + Index + ".sig"));
-            Directory.CreateDirectory(temp); Files.Write(Path.Combine(temp, Index), manifest);
+            var version = await Latest();
+            if (version == null) return "Windows 通道尚未发布更新";
+            var current = Version.Parse(typeof(Updates).Assembly.GetName().Version!.ToString(3));
+            if (version <= current) return "已是最新版本";
+            Directory.CreateDirectory(temp);
             var manager = new UpdateManager(temp, new UpdateOptions { ExplicitChannel = "win-x64", MaximumDeltasBeforeFallback = 0 });
             if (!manager.IsInstalled) return "请从 Windows 安装包启动以启用自动更新";
-            var update = await manager.CheckForUpdatesAsync(); if (update == null) return "已是最新版本";
+            if (!confirm($"下载并安装 Windows {version}？")) return "已取消更新";
+            string setup = Path.Combine(temp, FileName(version));
+            using (var source = await http.GetStreamAsync($"{Download}windows-v{version}/{FileName(version)}"))
+            using (var file = File.Create(setup)) await source.CopyToAsync(file);
+            await Task.Run(()=>BundledUpdate.Extract(setup,temp,version));
+            var update = await manager.CheckForUpdatesAsync();
+            if (update == null) return "已是最新版本";
             var asset = update.TargetFullRelease;
-            if (!confirm("更新至 " + asset.Version + "？\n\n" + asset.NotesMarkdown)) return "已取消更新";
-            if (Path.GetFileName(asset.FileName) != asset.FileName || !asset.FileName.EndsWith("-full.nupkg")) throw new InvalidDataException("更新包名称异常。");
-            var path = Path.Combine(temp, asset.FileName);
-            using (var source = await http.GetStreamAsync(Feed + Uri.EscapeDataString(asset.FileName)))
-            using (var file = File.Create(path)) await source.CopyToAsync(file);
-            using (var file = File.OpenRead(path))
-            {
-                if (!Convert.ToHexString(SHA256.HashData(file)).Equals(asset.SHA256, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("更新包校验失败。");
-            }
             await manager.DownloadUpdatesAsync(update); manager.ApplyUpdatesAndRestart(asset); return "正在重启";
         }
         finally { checking = false; if (Directory.Exists(temp)) Directory.Delete(temp, true); }

@@ -1,4 +1,4 @@
-# Swapdeck Windows 0.1.12 预览版
+# Swapdeck Windows 0.1.13 预览版
 
 对应 Mac 源码提交 `91e190c41be44a820036920b0e27adaea28e48ed`。把整个 windows 目录放到 Swapdeck 仓库根目录即可独立构建。本版安装包面向 Windows x64，自带 .NET 10 运行时。
 
@@ -35,7 +35,7 @@ dotnet tool install -g vpk --version 1.2.161
 ./release.ps1 -Version 0.1.1 -SigningKey <私钥文件路径> -Output <新目录> -Notes <更新说明文件>
 ```
 
-在 lazymicezhu/Swapdeck 的 GitHub Releases 中使用固定标签 windows-stable。每次先上传带版本号的 full.nupkg，再更新 releases.win-x64.json 和 releases.win-x64.json.sig，附上 Setup.exe。保持资产原名。可将该 Release 标记为预发布，以便继续使用 Mac 的 latest 下载地址。应用启动和运行中每 6 小时检查一次，设置中也可手动检查。用户确认后下载，验证 RSA 签名清单中的 SHA-256，再安装并重启。安装程序的 Authenticode 发布者签名需维护者的 Windows 代码签名证书。
+从 0.1.13 起，每个 Windows 版本使用独立的 windows-v版本号 标签，只上传发布目录中的 Setup.exe。更新包、清单和 RSA 签名均已嵌入安装包。客户端从 GitHub 查询版本，经用户确认后下载这个 exe，校验并提取内嵌包，通过 Velopack 更新。旧版仍从 windows-stable 获取兼容升级。
 
 ## 当前验证范围
 

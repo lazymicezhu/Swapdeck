@@ -16,6 +16,10 @@ class Tests {
         catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
     }
     static void Run(string[] args){
+        if (args is ["--extract-update", var setup, var destination, var version]) {
+            BundledUpdate.Extract(setup,destination,Version.Parse(version));
+            Check(true,"signed embedded update verified and extracted"); return;
+        }
         if(args is ["--routing-fixture", var folder, var endpoint] && Uri.TryCreate(endpoint,UriKind.Absolute,out var mockUrl) && mockUrl.IsLoopback){
             RoutingFixture(new Paths(folder,folder,Path.Combine(folder,"data"),Path.Combine(folder,"library")),endpoint);
             return;
