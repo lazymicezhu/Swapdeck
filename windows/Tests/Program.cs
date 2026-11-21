@@ -59,7 +59,16 @@ class Tests {
         tx.Commit(clients.Claude(p));var settings=Files.Object(paths.Settings);
         Check(settings["theme"]?.ToString()=="dark"&&settings["env"]?["OTHER"]?.ToString()=="keep"&&settings["env"]?["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"]?.ToString()=="1","Akko CLI merge");
         Check(clients.Active("Claude")==p.Id&&(bool?)Files.Object(Path.Combine(paths.Library,p.Id+".json"))["keep"]==true,"desktop library switch");
+        var cliEnv = settings["env"]!.AsObject();
+        Check((string?)cliEnv["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "200000" &&
+              (string?)cliEnv["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "200000", "Claude Code 200K defaults");
+        cliEnv["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = "120000";
+        cliEnv.Remove("CLAUDE_CODE_AUTO_COMPACT_WINDOW");
+        Files.Write(paths.Settings, Files.Json(settings));
         tx.Commit(clients.Claude(p with{Url="https://example.invalid"}));
+        cliEnv = Files.Object(paths.Settings)["env"]!.AsObject();
+        Check((string?)cliEnv["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "120000" &&
+              (string?)cliEnv["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "200000", "preserve custom Claude context on switch");
         Check(Files.Object(paths.Settings)["env"]?["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"]?.ToString()=="0","restore traffic preference");
 
         var mock=new AkkoFixture();

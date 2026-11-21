@@ -1,4 +1,4 @@
-# Swapdeck Windows 0.1.13 预览版
+# Swapdeck Windows 0.1.14 预览版
 
 对应 Mac 源码提交 `91e190c41be44a820036920b0e27adaea28e48ed`。把整个 windows 目录放到 Swapdeck 仓库根目录即可独立构建。本版安装包面向 Windows x64，自带 .NET 10 运行时。
 
@@ -7,6 +7,8 @@
 安装 Setup.exe 后，从开始菜单打开 Swapdeck。Claude 页面添加中转，Codex 页面支持登录 Lazymice 中转或记录已在 Codex 登录的官方账号。右键卡片可以编辑、重命名或删除。窗口固定为 385 × 650。用量页按线路展示花费，中转优先使用每日消费记录，缺少日记录时按观察到的余额变化统计。官方订阅按可关联账号的本机用量估算。双击「30 天」查看累计记录。实际账单以服务商数据为准。
 
 Claude Code 的用户配置位于 `%USERPROFILE%\.claude\settings.json`。对于 Akko，Swapdeck 仅允许向配置中的官方中转域名发送 GET /v1/usage 查询额度。模型调用由 Claude Code 或获准的桌面客户端直连。请自行填写个人 Key。Claude 桌面第三方模式使用已有的 configLibrary。默认查找 `%APPDATA%\Claude-3p\configLibrary`。桌面端数据目录不同的安装可在设置里选择含 _meta.json 的目录。只启用 CLI 的用户可直接切换，应用会说明实际生效范围。
+
+同步 Claude Code 时，上下文上限和自动压缩窗口默认均为 200,000 tokens。两项独立补齐，已有的自定义值会保留。
 
 Codex 使用 CODEX_HOME 或用户目录下的 .codex。遇到自定义 model_provider 时，切换会自动将其改为 openai，并保留原供应商配置段。切换会更新 auth.json 和 config.toml 的顶层 openai_base_url。Codex 对话使用 WSS 直连；仅回环测试允许 WS。握手失败时对话报错。部分需要对同一个地址发起 HTTP 的辅助功能（例如远程压缩）可能无法使用。关闭窗口会保持运行，再次启动可重新打开。完全退出请使用设置中「更多设置」下的「退出切号」。
 

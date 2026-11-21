@@ -74,6 +74,9 @@ public sealed class Clients(Paths paths, Accounts accounts)
             var json = Files.Object(paths.Settings); var env = json["env"]?.AsObject() ?? new();
             if (json["env"] == null) json["env"] = env;
             env["ANTHROPIC_BASE_URL"] = p.Url.TrimEnd('/'); env["ANTHROPIC_AUTH_TOKEN"] = p.Secret;
+            const string defaultContextTokens = "200000";
+            env.TryAdd("CLAUDE_CODE_MAX_CONTEXT_TOKENS", defaultContextTokens);
+            env.TryAdd("CLAUDE_CODE_AUTO_COMPACT_WINDOW", defaultContextTokens);
             var baseline = Path.Combine(paths.Data, "cli-traffic.bin");
             if (!File.Exists(baseline)) changes[baseline] = Files.Protect(Files.Json(env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"]?.ToString() ?? ""));
             if (Endpoint.ClientOnly(Endpoint.Root(p.Url))) env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1";
