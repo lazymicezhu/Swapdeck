@@ -383,7 +383,9 @@ final class CodexStore {
     /// Fetching a relay's model list before switching to it.
     private(set) var switching = false
     private(set) var refreshedAt: Date?
-    private(set) var message: String?
+    /// The last action's result for the toast; clears itself after a few seconds so switching tabs doesn't show it again.
+    private(set) var message: String? { didSet { messageExpiry?.cancel(); messageExpiry = MessageExpiry.schedule(message) { [weak self] in self?.message = nil } } }
+    @ObservationIgnored private var messageExpiry: Task<Void, Never>?
     /// Waiting for the user to sign in to another account in Codex.
     private(set) var pendingLogin: Bool { didSet { defaults.set(pendingLogin, forKey: "codex.pendingLogin") } }
     /// Always: a switch restarts Codex so it takes effect.

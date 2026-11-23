@@ -15,7 +15,7 @@ struct UsagePage: View {
     }
 
     @State private var scope = Scope.all
-    @State private var range = Range.month
+    @State private var range = Range.today
     private let claude = ClaudeStore.shared
     private let codex = CodexStore.shared
     private let usage = UsageStore.shared

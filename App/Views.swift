@@ -552,6 +552,20 @@ private struct AddSlot<Label: View>: View {
     }
 }
 
+/// A store's toast message lives only as long as the toast shows it. Left standing, it would come back every time
+/// the tab switches, since the toast sees the other tab's message as a new one.
+enum MessageExpiry {
+    static let seconds: Double = 6
+
+    @MainActor static func schedule(_ message: String?, clear: @escaping @MainActor () -> Void) -> Task<Void, Never>? {
+        guard message != nil else { return nil }
+        return Task { @MainActor in
+            try? await Task.sleep(for: .seconds(seconds))
+            if !Task.isCancelled { clear() }
+        }
+    }
+}
+
 /// The result of the last action, shown briefly at the bottom.
 private struct Toast: View {
     let message: String?
@@ -573,9 +587,9 @@ private struct Toast: View {
             }
         }
         .task(id: message) {
-            guard let message else { return }
+            guard let message else { withAnimation(.easeIn(duration: 0.25)) { shown = nil }; return }
             withAnimation(.easeOut(duration: 0.2)) { shown = message }
-            try? await Task.sleep(for: .seconds(6))
+            try? await Task.sleep(for: .seconds(MessageExpiry.seconds))
             withAnimation(.easeIn(duration: 0.25)) { if shown == message { shown = nil } }
         }
     }

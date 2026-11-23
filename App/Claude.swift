@@ -131,7 +131,9 @@ final class ClaudeStore {
     private(set) var errors: [UUID: String] = [:]
     private(set) var refreshing = false
     private(set) var refreshedAt: Date?
-    private(set) var message: String?
+    /// The last action's result for the toast; clears itself after a few seconds so switching tabs doesn't show it again.
+    private(set) var message: String? { didSet { messageExpiry?.cancel(); messageExpiry = MessageExpiry.schedule(message) { [weak self] in self?.message = nil } } }
+    @ObservationIgnored private var messageExpiry: Task<Void, Never>?
     /// Bumped when the config files may have changed, so `activeID` is read again.
     private var configVersion = 0
     /// Always: a switch restarts Claude so it takes effect, and the command line follows the desktop app.
